@@ -46,7 +46,6 @@ for ip in ip_list:
     else:
         info_dict = lookup_single_ip(ip)
         new_nets = info_dict['network']['cidr'].split(',')
-        # new_net = info_dict['network']['cidr']
         new_net_country = info_dict['network']['country']
         new_net_name = info_dict['network']['name']
         new_net_events = info_dict['network']['events']
@@ -59,7 +58,6 @@ for ip in ip_list:
                             'asn_description': info_dict['asn_description'],
                             'asn_registry': info_dict['asn_registry']}
             new_net_obj.add_asn(new_net_asn, new_asn_dict)
-
             cachedata[new_net] = new_net_obj
             output_data[ip] = new_net_obj
             print("New Record:{0}".format(ip))
