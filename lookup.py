@@ -6,6 +6,7 @@ from pprint import pprint
 class NetRecord:
     def __init__(self, network, country, name, events):
         self.cidr = IPv4Network(network)
+        self.net = network
         self.country_code = country
         self.name = name
         self.events = events
@@ -23,6 +24,12 @@ class NetRecord:
                 return self.asn_dict[net]
         return False
 
+    def print(self):
+        print("Network {0}:  Name={1}, Country Code={2}".format(self.net, self.name, self.country_code))
+        if self.asn_dict:
+            for asn_net in sorted(self.asn_dict.keys()):
+                for k, v in sorted(self.asn_dict[asn_net].items()):
+                    print("----> {0}==>{1}".format(k, v))
 
 def lookup_single_ip(ip_str):
     ip_record = IPWhois(ip_str)
@@ -57,13 +64,18 @@ for ip in ip_list:
                             'asn_date': info_dict['asn_date'],
                             'asn_description': info_dict['asn_description'],
                             'asn_registry': info_dict['asn_registry']}
-            new_net_obj.add_asn(new_net_asn, new_asn_dict)
+            try:
+                test_for_cidr = ip_network(new_net_asn)  # Sometimes ARIN returns 'NA' if there aren't net records
+                new_net_obj.add_asn(new_net_asn, new_asn_dict)
+            except ValueError:
+                print("Record {0} did not return a valid asn_cidr value, "
+                      "thus that value ({1}) will not be included.".format(new_net.strip(), new_net_asn))
+                pass
             cachedata[new_net] = new_net_obj
             output_data[ip] = new_net_obj
             print("New Record:{0}".format(ip))
 
 
 print("List complete, printing output...")
-for ip, info in output_data.items():
-    print("{0} Network >> {1}".format(ip, str(info.cidr)))
-    #print("\t{0}".format(info.find_asn_data(ip)))
+for ip, net_record in output_data.items():
+    net_record.print()
