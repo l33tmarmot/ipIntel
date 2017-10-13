@@ -1,7 +1,6 @@
 from ipwhois import IPWhois
 from ipaddress import ip_address, ip_network, IPv4Network, IPv4Address, AddressValueError
 from csv import DictReader
-from pathlib import Path
 
 
 class NetRecord:
