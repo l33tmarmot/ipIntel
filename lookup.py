@@ -104,7 +104,6 @@ def lookup_single_ip(ip_str):
     return results
 
 
-
 netstat_file_path = 'C:/MoTemp/netstat_ano.txt'
 netstat_ip_dict = parse_netstat_logs(netstat_file_path)
 
