@@ -126,12 +126,12 @@ class IntelLog:
     log_types = ('timestamped', 'non_timestamped')
     valid_states = ('unparsed', 'parsed', 'error')
 
-    def __init__(self, log_type, log_directory):
+    def __init__(self, log_type):
         assert log_type in self.log_types
         self.state = 'unparsed'
         assert self.state in self.valid_states
-        self.log_dir = Path(log_directory)
-        assert self.log_dir.is_dir()
+        #self.log_dir = Path(log_directory)
+        #assert self.log_dir.is_dir()
         self.record_count = 0
         self.columns = []
         self.reader_obj = None
@@ -153,7 +153,7 @@ class IntelLog:
         self.lines_to_skip = int(skip_lines)
         self.skip_initial_space = skip_space
         self.columns = file_columns
-        self.file_name = file_name
+        self.file_name = str(file_name)
         self.encoding = file_encoding
         self.delimiter = file_delimiter
         with open(self.file_name, 'r', encoding=self.encoding) as self.fh:
@@ -286,8 +286,8 @@ class IISLog(IntelLog):
         self.log_file = log_file
         self.log_path = Path(log_file)
         assert self.log_path.is_file()
-        self.log_size = stat(log_file)[6]
-        self.log_kbytes = self.log_size / 1024
+        # self.log_size = stat(self.log_file)[6]
+        # self.log_kbytes = self.log_size / 1024
         self.start_from_index = 3
         self.time_offset = time_offset
         self.local_cache = ip_cache
@@ -318,7 +318,7 @@ class IISLog(IntelLog):
         except:
             self.set_state('error')  # This indicates the log file instance here is in an error state.
             return self.state
-
+        print('\t{0} global IP addresses found.'.format(len(self.parsed_ip_dict['Global'])))
         self.set_state('parsed')  # This indicates that the log file instance has been parsed
         return self.state
 
@@ -379,7 +379,7 @@ class NetstatLog(IntelLog):
         except:
             self.set_state('error')
             return self.state
-
+        print('\t{0} global IP addresses found.'.format(len(self.parsed_ip_dict['Global'])))
         self.set_state('parsed')
         return self.state
 
@@ -390,12 +390,18 @@ netstat_path = r'C:/MoTemp/netstat/'
 
 cache_data = IP_Cache()
 
-for iis_file in choose_files(iis_path):
-    iis_log = IISLog(iis_file, cache_data)
-
 for netstat_file in choose_files(netstat_path):
     netstat_log = NetstatLog(netstat_file, cache_data)
+    netstat_log.parse_ip()
 
+print("Cache after netstat logs")
+cache_data.print_cache()
+
+for iis_file in choose_files(iis_path):
+    iis_log = IISLog(iis_file, cache_data)
+    iis_log.parse_ip()
+
+print("Cache after IIS logs")
 cache_data.print_cache()
 
 
