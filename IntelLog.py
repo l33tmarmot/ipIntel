@@ -14,7 +14,7 @@ def choose_files(file_path):
     files = p.glob('**/*.*')   # This is going to grab everything
     for f in files:
         if f.is_dir():
-            continue
+            continue  # Ignore directories
         yield f
 
 # ----------- CLASS DEFINITIONS -----------
@@ -54,6 +54,7 @@ class IP_Cache:
     def __init__(self):
         self.cache_data = defaultdict()
         self.output_data = defaultdict()
+        self.lookup_count = 0
 
     @classmethod
     def return_ip_type(cls, ip_obj):
@@ -95,6 +96,7 @@ class IP_Cache:
         cached_networks = [ip_network(major_net.strip()) for major_net in self.cache_data.keys()]
         ip_addresses_to_add = [ip for ip in ip_list if ip_address(ip) not in cached_networks]
         for address in ip_addresses_to_add:
+            self.lookup_count += 1
             info_dict = self.lookup_single_ip(address)
             new_nets = info_dict['network']['cidr'].split(',')
             new_net_country = info_dict['network']['country']
@@ -130,8 +132,6 @@ class IntelLog:
         assert log_type in self.log_types
         self.state = 'unparsed'
         assert self.state in self.valid_states
-        #self.log_dir = Path(log_directory)
-        #assert self.log_dir.is_dir()
         self.record_count = 0
         self.columns = []
         self.reader_obj = None
@@ -254,6 +254,8 @@ class IISLog(IntelLog):
     substatus_503 = {'0': 'Application pool unavailable',
                      '2': 'Concurrent request limit exceeded',
                      '3': 'ASP.NET queue full'}
+    substatus_codes = {'403': substatus_403, '404': substatus_404, '500': substatus_500, '502': substatus_502,
+                       '503': substatus_503}
 
     @classmethod
     def set_win32_url(cls, win32_status):
@@ -281,13 +283,26 @@ class IISLog(IntelLog):
         else:
             return r'https://msdn.microsoft.com/en-us/library/ms681381(v=vs.85).aspx'
 
+    @classmethod
+    def set_extended_defs(cls, row):
+        if row['sc-status-code'] in cls.status_codes.keys():
+            extended_defs = [cls.status_codes[row['sc-status-code']]]
+            if row['sc-status-code'] in cls.substatus_codes.keys():
+                extended_defs.append(cls.substatus_codes['sc-sub-status'])
+            else:
+                extended_defs.append("Undefined")
+        else:
+            extended_defs = "Undefined", "Undefined"
+        return extended_defs
+
+
     def __init__(self, log_file, ip_cache, time_offset=None):
         super().__init__('timestamped')
-        self.log_file = log_file
+        self.log_file = str(log_file)
         self.log_path = Path(log_file)
         assert self.log_path.is_file()
-        # self.log_size = stat(self.log_file)[6]
-        # self.log_kbytes = self.log_size / 1024
+        self.log_size = stat(self.log_file)[6]
+        self.log_kbytes = self.log_size / 1024
         self.start_from_index = 3
         self.time_offset = time_offset
         self.local_cache = ip_cache
@@ -301,6 +316,8 @@ class IISLog(IntelLog):
         self.fh = None
         self.ip_dict = defaultdict(list)
         self.parsed_ip_dict = defaultdict(list)
+        self.username_dict = defaultdict(list)
+        self.line_number = 0
 
     def parse_ip(self):
         for self.file_row in self.open_log(self.log_file, self.encoding, self.delimiter, self.iis_fields):
@@ -321,6 +338,19 @@ class IISLog(IntelLog):
         print('\t{0} global IP addresses found.'.format(len(self.parsed_ip_dict['Global'])))
         self.set_state('parsed')  # This indicates that the log file instance has been parsed
         return self.state
+
+    def parse_usernames(self, username_value):
+        for self.file_row in self.open_log(self.log_file, self.encoding, self.delimiter, self.iis_fields):
+            self.line_number += 1
+            if self.file_row['cs-username'] and not self.file_row['cs-username'] == '-':
+                if self.file_row['cs-username'] == username_value:
+                    self.username_dict[self.file_name].append(self.file_row)
+                else:
+                    continue
+        self.set_state('parsed')
+        return self.state
+
+
 
 
 class NetstatLog(IntelLog):
@@ -362,7 +392,7 @@ class NetstatLog(IntelLog):
                 self.parsed_netstat_log['Remote Address'], self.parsed_netstat_log['Remote Port'] \
                     = self.file_row['Foreign Address'].split(':')
             except ValueError:
-                continue # Throws out this line and moves on
+                continue # Throws out this line and moves on.  Opted not to create extensive error-handling logic.
 
             self.local_ip = self.local_cache.return_ip_object(self.parsed_netstat_log['Local Address'])
             self.remote_ip = self.local_cache.return_ip_object(self.parsed_netstat_log['Remote Address'])
@@ -393,16 +423,27 @@ cache_data = IP_Cache()
 for netstat_file in choose_files(netstat_path):
     netstat_log = NetstatLog(netstat_file, cache_data)
     netstat_log.parse_ip()
+    print('{0} status = {1}'.format(netstat_log.file_name, netstat_log.state))
+    if netstat_log.state == 'parsed':
+        cache_data.add_to_cache(netstat_log.parsed_ip_dict['Global'])
+        print('Data from {0} added to local IP cache data.'.format(netstat_log.file_name))
+    else:
+        print("{0} had some kind of parsing error, skipping that file's data for now.".format(netstat_log.file_name))
+    print("Total RDAP Queries submitted after {0} parsing = {1}".format(netstat_log.file_name, cache_data.lookup_count))
 
-print("Cache after netstat logs")
-cache_data.print_cache()
 
 for iis_file in choose_files(iis_path):
     iis_log = IISLog(iis_file, cache_data)
     iis_log.parse_ip()
+    print('{0} status = {1}'.format(iis_log.file_name, iis_log.state))
+    if iis_log.state == 'parsed':
+        cache_data.add_to_cache(iis_log.parsed_ip_dict['Global'])
+        print('Data from {0} added to local IP cache data.'.format(iis_log.file_name))
+    else:
+        print("{0} had some kind of parsing error, skipping that file's data for now.".format(iis_log.file_name))
+    print("Total RDAP Queries submitted after {0} parsing = {1}".format(iis_log.file_name, cache_data.lookup_count))
 
-print("Cache after IIS logs")
-cache_data.print_cache()
+
 
 
 
