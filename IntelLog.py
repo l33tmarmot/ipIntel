@@ -4,6 +4,10 @@ from ipaddress import ip_address, ip_network, IPv4Network, IPv4Address, AddressV
 from csv import DictReader
 from ipwhois import IPWhois
 from collections import defaultdict
+from io import BytesIO, TextIOWrapper
+import mmap
+import pickle
+
 
 # ----------- FUNCTIONS-----------
 
@@ -55,6 +59,20 @@ class IP_Cache:
         self.cache_data = defaultdict()
         self.output_data = defaultdict()
         self.lookup_count = 0
+        self.cache_hits = 0
+        self.ip_addresses_to_add = None
+        self.ip_objs = None
+        self.cached_networks = set()
+        self.info_dict = None
+        self.new_nets = None
+        self.new_net_country = None
+        self.new_net_name = None
+        self.new_net_events = None
+        self.new_net_asn = None
+        self.new_net_obj = None
+        self.new_asn_dict = None
+        self.test_for_cidr = None
+        self.ip_addresses_with_lookup_errors = set()
 
     @classmethod
     def return_ip_type(cls, ip_obj):
@@ -88,36 +106,60 @@ class IP_Cache:
 
     @classmethod
     def lookup_single_ip(cls, ip_str):
-        ip_record = IPWhois(ip_str)
+        ip_record = IPWhois(ip_str, allow_permutations=False)
         results = ip_record.lookup_rdap(depth=0)
         return results
 
     def add_to_cache(self, ip_list):
-        cached_networks = [ip_network(major_net.strip()) for major_net in self.cache_data.keys()]
-        ip_addresses_to_add = [ip for ip in ip_list if ip_address(ip) not in cached_networks]
-        for address in ip_addresses_to_add:
-            self.lookup_count += 1
-            info_dict = self.lookup_single_ip(address)
-            new_nets = info_dict['network']['cidr'].split(',')
-            new_net_country = info_dict['network']['country']
-            new_net_name = info_dict['network']['name']
-            new_net_events = info_dict['network']['events']
-            new_net_asn = info_dict['asn_cidr']
-            for new_net in new_nets:
-                new_net_obj = NetRecord(new_net.strip(), new_net_country, new_net_name, new_net_events)
-                new_asn_dict = {'asn': info_dict['asn'],
-                                'asn_country_code': info_dict['asn_country_code'],
-                                'asn_date': info_dict['asn_date'],
-                                'asn_description': info_dict['asn_description'],
-                                'asn_registry': info_dict['asn_registry']}
+        self.cache_hits = 0
+        self.lookup_count = 0
+        self.cached_networks = {IPv4Network(major_net.strip()) for major_net in self.cache_data.keys()}
+        if self.cached_networks:
+            self.ip_objs = {IPv4Address(ip_add) for ip_add in ip_list}
+            self.ip_addresses_to_add = set()
+            for ip in self.ip_objs:
+                for cached_net in self.cached_networks:
+                    if ip in cached_net:
+                        self.cache_hits += 1
+                        break
+                else:
+                    self.ip_addresses_to_add.add(str(ip))
+        else:
+            self.ip_addresses_to_add = ip_list
+
+        for address in self.ip_addresses_to_add:
+            try:
+                self.lookup_count += 1
+                self.info_dict = self.lookup_single_ip(address)
+            except:
+                print("Unhandled lookup error occurred on {0}, adding to error list.".format(address))
+                self.ip_addresses_with_lookup_errors.add(address)
+                continue
+
+            self.new_nets = self.info_dict['network']['cidr'].split(',')
+            self.new_net_country = self.info_dict['network']['country']
+            self.new_net_name = self.info_dict['network']['name']
+            self.new_net_events = self.info_dict['network']['events']
+            self.new_net_asn = self.info_dict['asn_cidr']
+            for new_net in self.new_nets:
+                self.new_net_obj = NetRecord(new_net.strip(),
+                                             self.new_net_country,
+                                             self.new_net_name,
+                                             self.new_net_events)
+                self.new_asn_dict = {'asn': self.info_dict['asn'],
+                                     'asn_country_code': self.info_dict['asn_country_code'],
+                                     'asn_date': self.info_dict['asn_date'],
+                                     'asn_description': self.info_dict['asn_description'],
+                                     'asn_registry': self.info_dict['asn_registry']}
                 try:
-                    test_for_cidr = ip_network(new_net_asn)  # Sometimes ARIN returns 'NA'
-                    new_net_obj.add_asn(new_net_asn, new_asn_dict)
+                    self.test_for_cidr = ip_network(self.new_net_asn)  # Sometimes ARIN returns 'NA'
+                    self.new_net_obj.add_asn(self.new_net_asn, self.new_asn_dict)
                 except ValueError:
                     print("Record {0} did not return a valid asn_cidr value, "
-                          "thus that value ({1}) will not be included.".format(new_net.strip(), new_net_asn))
+                          "thus that value ({1}) will not be included.".format(new_net.strip(), self.new_net_asn))
                     pass
-                self.cache_data[new_net] = new_net_obj
+                self.cache_data[new_net] = self.new_net_obj
+                pass
 
     def print_cache(self):
         for network in self.cache_data.keys():
@@ -140,7 +182,11 @@ class IntelLog:
         self.encoding = ''
         self.delimiter = ''
         self.lines_to_skip = 0
-        self.skip_initial_space=False
+        self.skip_initial_space = False
+        self.log_file_buffer = []  # Used when loading a log completely into memory first for performance
+        self.mm = None
+        self.b_obj = None
+        self.t_obj = None
 
     def get_state(self):
         return self.state
@@ -158,7 +204,7 @@ class IntelLog:
         self.delimiter = file_delimiter
         with open(self.file_name, 'r', encoding=self.encoding) as self.fh:
             for i in range(self.lines_to_skip):
-                self.fh.readline() # This is used to skip over any header garbage by moving the file pointer ahead
+                self.fh.readline()  # This is used to skip over any header garbage by moving the file pointer ahead
             self.reader_obj = DictReader(self.fh,
                                          delimiter=self.delimiter,
                                          fieldnames=self.columns,
@@ -166,9 +212,27 @@ class IntelLog:
             for self.row in self.reader_obj:
                 yield self.row
 
-    @classmethod
-    def remove_duplicates(cls, in_list):
-        return list(set(in_list))
+    def open_log_in_mem(self, file_name, file_encoding, file_delimiter, file_columns, skip_lines=0, skip_space=False):
+        self.lines_to_skip = int(skip_lines)
+        self.skip_initial_space = skip_space
+        self.columns = file_columns
+        self.file_name = str(file_name)
+        self.encoding = file_encoding
+        self.delimiter = file_delimiter
+        with open(self.file_name, 'r+', encoding=self.encoding) as self.fh:
+            print("Reading {0} into memory...".format(self.file_name))
+            self.mm = mmap.mmap(self.fh.fileno(), 0)
+            self.b_obj = BytesIO(self.mm)
+            self.t_obj = TextIOWrapper(self.b_obj)
+
+        for i in range(self.lines_to_skip):
+            self.t_obj.readline()  # This is used to skip over any header garbage by moving the file pointer ahead
+        self.reader_obj = DictReader(self.t_obj,
+                                     delimiter=self.delimiter,
+                                     fieldnames=self.columns,
+                                     skipinitialspace=self.skip_initial_space)
+        for self.row in self.reader_obj:
+            self.log_file_buffer.append(self.row)  # Puts every row in the file into the list in memory
 
 
 class IISLog(IntelLog):
@@ -295,7 +359,6 @@ class IISLog(IntelLog):
             extended_defs = "Undefined", "Undefined"
         return extended_defs
 
-
     def __init__(self, log_file, ip_cache, time_offset=None):
         super().__init__('timestamped')
         self.log_file = str(log_file)
@@ -306,36 +369,55 @@ class IISLog(IntelLog):
         self.start_from_index = 3
         self.time_offset = time_offset
         self.local_cache = ip_cache
-        self.server_ip = None
-        self.server_ip_type = ''
-        self.client_ip = None
-        self.client_ip_type = ''
         self.encoding = 'utf-8'
         self.delimiter = ' '
         self.dr = None
         self.fh = None
-        self.ip_dict = defaultdict(list)
-        self.parsed_ip_dict = defaultdict(list)
         self.username_dict = defaultdict(list)
         self.line_number = 0
+        self.unique_ip_addresses = set()
+        self.unique_ip_objects = set()
+        self.log_ip_types = defaultdict(set)
+        self.log_ip_type = None
 
     def parse_ip(self):
         for self.file_row in self.open_log(self.log_file, self.encoding, self.delimiter, self.iis_fields):
             self.record_count += 1
-            self.server_ip = self.local_cache.return_ip_object(self.file_row['s-ip'])
-            self.server_ip_type = self.local_cache.return_ip_type(self.server_ip)
-            self.ip_dict[self.server_ip_type].append(self.file_row['s-ip'])
-            self.client_ip = self.local_cache.return_ip_object(self.file_row['c-ip'])
-            self.client_ip_type = self.local_cache.return_ip_type(self.client_ip)
-            self.ip_dict[self.client_ip_type].append(self.file_row['c-ip'])
+            self.unique_ip_addresses.add(self.file_row['s-ip'])
+            self.unique_ip_addresses.add(self.file_row['c-ip'])
         print('{0} rows read in {1}.'.format(self.record_count, self.log_file))
+        self.unique_ip_objects = {self.local_cache.return_ip_object(ip_string) for ip_string
+                                  in self.unique_ip_addresses}
         try:
-            for address_type in self.ip_dict.keys():
-                self.parsed_ip_dict[address_type] = self.remove_duplicates(self.ip_dict[address_type])
+            for ip_obj in self.unique_ip_objects:
+                self.log_ip_type = self.local_cache.return_ip_type(ip_obj)
+                self.log_ip_types[self.log_ip_type].add(str(ip_obj))
         except:
-            self.set_state('error')  # This indicates the log file instance here is in an error state.
+            self.set_state('error')
             return self.state
-        print('\t{0} global IP addresses found.'.format(len(self.parsed_ip_dict['Global'])))
+
+        print('\t{0} global IP addresses found.'.format(len(self.log_ip_types['Global'])))
+        self.set_state('parsed')  # This indicates that the log file instance has been parsed
+        return self.state
+
+    def parse_ip_in_mem(self):
+        self.open_log_in_mem(self.log_file, self.encoding, self.delimiter, self.iis_fields)
+        for self.row in self.log_file_buffer:
+            self.record_count += 1
+            self.unique_ip_addresses.add(self.row['s-ip'])
+            self.unique_ip_addresses.add(self.row['c-ip'])
+        print('{0} rows read in {1}.'.format(self.record_count, self.log_file))
+        self.unique_ip_objects = {self.local_cache.return_ip_object(ip_string) for ip_string
+                                  in self.unique_ip_addresses}
+        try:
+            for ip_obj in self.unique_ip_objects:
+                self.log_ip_type = self.local_cache.return_ip_type(ip_obj)
+                self.log_ip_types[self.log_ip_type].add(str(ip_obj))
+        except:
+            self.set_state('error')
+            return self.state
+
+        print('\t{0} global IP addresses found.'.format(len(self.log_ip_types['Global'])))
         self.set_state('parsed')  # This indicates that the log file instance has been parsed
         return self.state
 
@@ -351,8 +433,6 @@ class IISLog(IntelLog):
         return self.state
 
 
-
-
 class NetstatLog(IntelLog):
     netstat_fields = ('Proto', 'Local Address', 'Foreign Address', 'State', 'PID')
 
@@ -364,19 +444,15 @@ class NetstatLog(IntelLog):
         self.local_cache = ip_cache
         self.start_from_index = 4
         self.parsed_netstat_log = {}
-        self.private_ip_list = []
-        self.public_ip_list = []
-        self.local_ip = None
-        self.local_ip_type = ''
-        self.remote_ip = None
-        self.remote_ip_type = ''
         self.dr = None
         self.nsfo = None
         self.encoding = 'utf-8'
         self.delimiter = ' '
         self.skip_initial_space = True
-        self.ip_dict = defaultdict(list)
-        self.parsed_ip_dict = defaultdict(list)
+        self.unique_ip_addresses = set()
+        self.unique_ip_objects = set()
+        self.log_ip_types = defaultdict(set)
+        self.log_ip_type = None
 
     def parse_ip(self):
         for self.file_row in self.open_log(self.log_file,
@@ -394,55 +470,108 @@ class NetstatLog(IntelLog):
             except ValueError:
                 continue # Throws out this line and moves on.  Opted not to create extensive error-handling logic.
 
-            self.local_ip = self.local_cache.return_ip_object(self.parsed_netstat_log['Local Address'])
-            self.remote_ip = self.local_cache.return_ip_object(self.parsed_netstat_log['Remote Address'])
+            self.unique_ip_addresses.add(self.parsed_netstat_log['Local Address'])
+            self.unique_ip_addresses.add(self.parsed_netstat_log['Remote Address'])
 
-            self.local_ip_type = self.local_cache.return_ip_type(self.local_ip)
-            self.ip_dict[self.local_ip_type].append(self.parsed_netstat_log['Local Address'])
-
-            self.remote_ip_type = self.local_cache.return_ip_type(self.remote_ip)
-            self.ip_dict[self.remote_ip_type].append(self.parsed_netstat_log['Remote Address'])
+        self.unique_ip_objects = {self.local_cache.return_ip_object(ip_string) for ip_string
+                                  in self.unique_ip_addresses}
         print('{0} rows read in {1}.'.format(self.record_count, self.log_file))
         try:
-            for address_type in self.ip_dict.keys():
-                self.parsed_ip_dict[address_type] = self.remove_duplicates(self.ip_dict[address_type])
+            for ip_obj in self.unique_ip_objects:
+                self.log_ip_type = self.local_cache.return_ip_type(ip_obj)
+                self.log_ip_types[self.log_ip_type].add(str(ip_obj))
         except:
             self.set_state('error')
             return self.state
-        print('\t{0} global IP addresses found.'.format(len(self.parsed_ip_dict['Global'])))
+
+        print('\t{0} global IP addresses found.'.format(len(self.log_ip_types['Global'])))
         self.set_state('parsed')
         return self.state
 
+    def parse_ip_in_mem(self):
+        self.open_log_in_mem(self.log_file,
+                             self.encoding,
+                             self.delimiter,
+                             self.netstat_fields,
+                             self.start_from_index,
+                             self.skip_initial_space)
+        for self.row in self.log_file_buffer:
+            self.record_count += 1
+            try:
+                self.parsed_netstat_log['Local Address'], self.parsed_netstat_log['Local Port'] \
+                    = self.row['Local Address'].split(':')
+                self.parsed_netstat_log['Remote Address'], self.parsed_netstat_log['Remote Port'] \
+                    = self.row['Foreign Address'].split(':')
+            except ValueError:
+                continue  # Throws out this line and moves on.  Opted not to create extensive error-handling logic.
 
-base_path = r'C:/MoTemp'
+            self.unique_ip_addresses.add(self.parsed_netstat_log['Local Address'])
+            self.unique_ip_addresses.add(self.parsed_netstat_log['Remote Address'])
+        self.unique_ip_objects = {self.local_cache.return_ip_object(ip_string) for ip_string
+                                  in self.unique_ip_addresses}
+        print('{0} rows read in {1}.'.format(self.record_count, self.log_file))
+        try:
+            for ip_obj in self.unique_ip_objects:
+                self.log_ip_type = self.local_cache.return_ip_type(ip_obj)
+                self.log_ip_types[self.log_ip_type].add(str(ip_obj))
+        except:
+            self.set_state('error')
+            return self.state
+
+        print('\t{0} global IP addresses found.'.format(len(self.log_ip_types['Global'])))
+        self.set_state('parsed')
+        return self.state
+
+# -------------- Main Flow ----------------
+
+
+base_path = r'C:/MoTemp/'
 iis_path = r'C:/MoTemp/iis/'
 netstat_path = r'C:/MoTemp/netstat/'
+ip_cache_filename = base_path + 'ip_cache.dat'
+unique_global_ip_addresses = set()
 
-cache_data = IP_Cache()
+try:
+    with open(ip_cache_filename, 'rb') as p_ip_cache:
+        cache_data = pickle.load(p_ip_cache)
+        print("Loaded cache file into memory.")
+except FileNotFoundError:
+    print("{0} was not found, assuming an empty cache!".format(ip_cache_filename))
+    cache_data = IP_Cache()
 
 for netstat_file in choose_files(netstat_path):
     netstat_log = NetstatLog(netstat_file, cache_data)
-    netstat_log.parse_ip()
-    print('{0} status = {1}'.format(netstat_log.file_name, netstat_log.state))
+    netstat_log.parse_ip_in_mem()
     if netstat_log.state == 'parsed':
-        cache_data.add_to_cache(netstat_log.parsed_ip_dict['Global'])
-        print('Data from {0} added to local IP cache data.'.format(netstat_log.file_name))
+        unique_global_ip_addresses |= netstat_log.log_ip_types['Global']
     else:
         print("{0} had some kind of parsing error, skipping that file's data for now.".format(netstat_log.file_name))
-    print("Total RDAP Queries submitted after {0} parsing = {1}".format(netstat_log.file_name, cache_data.lookup_count))
 
+    print('{0} status = {1}'.format(netstat_log.file_name, netstat_log.state))
 
 for iis_file in choose_files(iis_path):
     iis_log = IISLog(iis_file, cache_data)
     iis_log.parse_ip()
-    print('{0} status = {1}'.format(iis_log.file_name, iis_log.state))
     if iis_log.state == 'parsed':
-        cache_data.add_to_cache(iis_log.parsed_ip_dict['Global'])
-        print('Data from {0} added to local IP cache data.'.format(iis_log.file_name))
+        unique_global_ip_addresses |= iis_log.log_ip_types['Global']
     else:
         print("{0} had some kind of parsing error, skipping that file's data for now.".format(iis_log.file_name))
-    print("Total RDAP Queries submitted after {0} parsing = {1}".format(iis_log.file_name, cache_data.lookup_count))
 
+    print('{0} status = {1}'.format(iis_log.file_name, iis_log.state))
+
+# -------- Populate IP Cache ----------
+
+cache_data.add_to_cache(unique_global_ip_addresses)
+print('Cache Hits={0}'.format(cache_data.cache_hits))
+print('Lookups Performed={0}'.format(cache_data.lookup_count))
+
+if cache_data.ip_addresses_with_lookup_errors:
+    print('--------- Lookups that failed for which no data was collected are listed below ---------')
+    for error_ip in cache_data.ip_addresses_with_lookup_errors:
+        print(error_ip)
+
+with open(ip_cache_filename, 'wb') as p_ip_cache:
+    pickle.dump(cache_data, p_ip_cache, pickle.HIGHEST_PROTOCOL)
 
 
 
