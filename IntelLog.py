@@ -22,6 +22,7 @@ def choose_files(file_path):
             continue  # Ignore directories
         yield f
 
+
 def merge_victim_tasks(victim):
     if not victim.verbose_task_dict:
         victim.status_tasks_merge_complete = False
@@ -481,6 +482,8 @@ class NetstatLog(IntelLog):
         self.unique_ip_objects = set()
         self.log_ip_types = defaultdict(set)
         self.log_ip_type = None
+        self.pid_to_network = {}
+        self.network_pids = defaultdict(list)
 
     def parse_ip(self):
         for self.file_row in self.open_log(self.log_file,
@@ -530,6 +533,12 @@ class NetstatLog(IntelLog):
                     = self.row['Local Address'].split(':')
                 self.parsed_netstat_log['Remote Address'], self.parsed_netstat_log['Remote Port'] \
                     = self.row['Foreign Address'].split(':')
+                self.pid_to_network['PID'] = self.row['PID']
+                self.pid_to_network['Local Address'] = self.parsed_netstat_log['Local Address']
+                self.pid_to_network['Local Port'] = self.parsed_netstat_log['Local Port']
+                self.pid_to_network['Remote Address'] = self.parsed_netstat_log['Remote Address']
+                self.pid_to_network['Remote Port'] = self.parsed_netstat_log['Remote Port']
+                self.network_pids[self.row['PID']] = self.pid_to_network
             except ValueError:
                 continue  # Throws out this line and moves on.  Opted not to create extensive error-handling logic.
 
@@ -575,7 +584,6 @@ class TaskList(IntelLog):
         self.consolidated_task_info = {}
         self.victim = victim
 
-
     def parse_tasks_in_mem(self):
         self.__determine_tasklist_format()
         assert self.state is not 'error'
@@ -592,7 +600,6 @@ class TaskList(IntelLog):
         except:
             print("Error encountered while appending task data.")
             self.set_state('error')
-
 
     def __determine_tasklist_format(self):
         with open(str(self.log_file), 'r', encoding='utf-8') as fh:
@@ -625,6 +632,7 @@ class Victim():
         self.module_task_dict = {}
         self.merged_task_dict = {}
         self.status_tasks_merge_complete = False
+        self.network_pid_records = None
 
 
     @classmethod
@@ -668,7 +676,7 @@ for tasklist_file in choose_files(tasklist_path):
             else:
                 print("{0}: Undefined tasklist column format, skipping line.".format(tasklist_log.file_name))
                 tasklist_log.set_state('error')
-            #print("{0} : {1}".format(pid, tasklist_log.consolidated_task_info[pid]))
+            # print("{0} : {1}".format(pid, tasklist_log.consolidated_task_info[pid]))
 
 merge_victim_tasks(victim)
 
@@ -679,6 +687,9 @@ for netstat_file in choose_files(netstat_path):
         unique_global_ip_addresses |= netstat_log.log_ip_types['Global']
     else:
         print("{0} had some kind of parsing error, skipping that file's data for now.".format(netstat_log.file_name))
+    for pid in victim.merged_task_dict.keys():
+        if pid in netstat_log.network_pids.keys():
+            victim.network_pid_records = victim.merge_tasks(victim.merged_task_dict[pid], netstat_log.network_pids[pid])
 
     print('{0} status = {1}'.format(netstat_log.file_name, netstat_log.state))
 
@@ -706,7 +717,7 @@ if cache_data.ip_addresses_with_lookup_errors:
 with open(ip_cache_filename, 'wb') as p_ip_cache:
     pickle.dump(cache_data, p_ip_cache, pickle.HIGHEST_PROTOCOL)
 
-
+pprint.pprint(victim.network_pid_records)
 
 
 
