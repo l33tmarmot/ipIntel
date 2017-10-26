@@ -1,12 +1,13 @@
 from pathlib import Path
 from os import stat
 from ipaddress import ip_address, ip_network, IPv4Network, IPv4Address, AddressValueError
-from csv import DictReader
+from csv import DictReader, QUOTE_ALL, reader
 from ipwhois import IPWhois
 from collections import defaultdict
 from io import BytesIO, TextIOWrapper
 import mmap
 import pickle
+import pprint
 
 
 # ----------- FUNCTIONS-----------
@@ -20,6 +21,27 @@ def choose_files(file_path):
         if f.is_dir():
             continue  # Ignore directories
         yield f
+
+def merge_victim_tasks(victim):
+    if not victim.verbose_task_dict:
+        victim.status_tasks_merge_complete = False
+        print("Merging cannot continue as there is no verbose task dictionary to work with.")
+        return False
+    else:
+        for pid, row in victim.verbose_task_dict.items():
+            if pid in victim.service_task_dict.keys() and pid in victim.module_task_dict.keys():
+                print("PID {0} in all 3 dicts, merging.".format(pid))
+                merge_step_1_dict = victim.merge_tasks(victim.service_task_dict[pid], victim.module_task_dict[pid])
+            elif pid in victim.module_task_dict.keys() and pid not in victim.service_task_dict.keys():
+                print("PID {0} in both verbose and module dicts, merging.".format(pid))
+                merge_step_1_dict = victim.merge_tasks(victim.module_task_dict[pid], victim.verbose_task_dict[pid])
+            else:
+                print("PID {0} only in verbose dictionary, moving.".format(pid))
+                merge_step_1_dict = victim.verbose_task_dict[pid]
+
+            victim.merged_task_dict[pid] = victim.merge_tasks(merge_step_1_dict, victim.verbose_task_dict[pid])
+        victim.status_tasks_merge_complete = True
+        return True
 
 # ----------- CLASS DEFINITIONS -----------
 
@@ -219,20 +241,26 @@ class IntelLog:
         self.file_name = str(file_name)
         self.encoding = file_encoding
         self.delimiter = file_delimiter
-        with open(self.file_name, 'r+', encoding=self.encoding) as self.fh:
-            print("Reading {0} into memory...".format(self.file_name))
-            self.mm = mmap.mmap(self.fh.fileno(), 0)
-            self.b_obj = BytesIO(self.mm)
-            self.t_obj = TextIOWrapper(self.b_obj)
+        try:
 
-        for i in range(self.lines_to_skip):
-            self.t_obj.readline()  # This is used to skip over any header garbage by moving the file pointer ahead
-        self.reader_obj = DictReader(self.t_obj,
-                                     delimiter=self.delimiter,
-                                     fieldnames=self.columns,
-                                     skipinitialspace=self.skip_initial_space)
-        for self.row in self.reader_obj:
-            self.log_file_buffer.append(self.row)  # Puts every row in the file into the list in memory
+            with open(self.file_name, 'r+', encoding=self.encoding) as self.fh:
+                print("Reading {0} into memory...".format(self.file_name))
+                self.mm = mmap.mmap(self.fh.fileno(), 0)
+                self.b_obj = BytesIO(self.mm)
+                self.t_obj = TextIOWrapper(self.b_obj)
+
+            for i in range(self.lines_to_skip):
+                self.t_obj.readline()  # This is used to skip over any header garbage by moving the file pointer ahead
+            self.reader_obj = DictReader(self.t_obj,
+                                         delimiter=self.delimiter,
+                                         fieldnames=self.columns,
+                                         skipinitialspace=self.skip_initial_space)
+            for self.row in self.reader_obj:
+                self.log_file_buffer.append(self.row)  # Puts every row in the file into the list in memory
+        except:
+            print("Error encountered while opening {0} "
+                  "in a memory map and parsing into a stream object".format(self.file_name))
+            self.set_state('error')
 
 
 class IISLog(IntelLog):
@@ -522,14 +550,101 @@ class NetstatLog(IntelLog):
         self.set_state('parsed')
         return self.state
 
+
+class TaskList(IntelLog):
+    tasklist_fields = {'SVC': ('Image Name', 'PID', 'Services'),
+                       'MODULE': ('Image Name', 'PID', 'Modules'),
+                       'VERBOSE': ('Image Name', 'PID', 'Session Name',
+                                   'Session#', 'Mem Usage', 'Status',
+                                   'User Name', 'CPU Time', 'Window Title')}
+
+    def __init__(self, log_file):
+        super().__init__('non_timestamped')
+        self.log_file = log_file
+        self.log_path = Path(log_file)
+        assert self.log_path.is_file()
+        self.encoding = 'utf-8'
+        self.delimiter = ','
+        self.quote_char = '"'
+        self.quoting = QUOTE_ALL
+        self.skip_initial_space = True
+        self.verbose_header_length = 9
+        self.svc_header_length = 3
+        self.mod_header_length = 3
+        self.tasklist_field_key = None
+        self.consolidated_task_info = {}
+        self.victim = victim
+
+
+    def parse_tasks_in_mem(self):
+        self.__determine_tasklist_format()
+        assert self.state is not 'error'
+        self.open_log_in_mem(self.log_file,
+                             self.encoding,
+                             self.delimiter,
+                             self.tasklist_fields[self.tasklist_field_key])
+        try:
+            for self.row in self.log_file_buffer:
+                self.record_count += 1
+                self.consolidated_task_info[self.row['PID']] = self.row
+
+            self.set_state('parsed')
+        except:
+            print("Error encountered while appending task data.")
+            self.set_state('error')
+
+
+    def __determine_tasklist_format(self):
+        with open(str(self.log_file), 'r', encoding='utf-8') as fh:
+            self.header_reader = reader(fh, delimiter=self.delimiter, quotechar=self.quote_char, quoting=self.quoting)
+            self.header_row = self.header_reader.__next__()
+            self.header_len = len(self.header_row)
+            if self.header_len == 9:
+                self.tasklist_field_key = 'VERBOSE'
+            elif self.header_len == 3:
+                if self.header_row[2] == 'Services':
+                    self.tasklist_field_key = 'SVC'
+                elif self.header_row[2] == 'Modules':
+                    self.tasklist_field_key = 'MODULE'
+                else:
+                    print("Header of {0} is three columns, "
+                          "but does not match existing formats accounted for.".format(self.file_name))
+                    self.set_state('error')
+            else:
+                print("Output of {0} is not in a format currently accounted for.".format(self.file_name))
+                self.set_state('error')
+            return self.state
+
+
+class Victim():
+    def __init__(self):
+        self.hostname = None
+        self.ip_addresses = []
+        self.verbose_task_dict = {}
+        self.service_task_dict = {}
+        self.module_task_dict = {}
+        self.merged_task_dict = {}
+        self.status_tasks_merge_complete = False
+
+
+    @classmethod
+    def merge_tasks(cls, dict_a, dict_b):
+        return {**dict_a, **dict_b}
+
+
+
 # -------------- Main Flow ----------------
 
 
 base_path = r'C:/MoTemp/'
 iis_path = r'C:/MoTemp/iis/'
 netstat_path = r'C:/MoTemp/netstat/'
+tasklist_path = r'C:/MoTemp/tasklist/'
 ip_cache_filename = base_path + 'ip_cache.dat'
+victim_data = base_path + 'victim.dat'
 unique_global_ip_addresses = set()
+victim = Victim()
+
 
 try:
     with open(ip_cache_filename, 'rb') as p_ip_cache:
@@ -538,6 +653,24 @@ try:
 except FileNotFoundError:
     print("{0} was not found, assuming an empty cache!".format(ip_cache_filename))
     cache_data = IP_Cache()
+
+for tasklist_file in choose_files(tasklist_path):
+    tasklist_log = TaskList(tasklist_file)
+    tasklist_log.parse_tasks_in_mem()
+    if tasklist_log.state == 'parsed':
+        for pid, row in tasklist_log.consolidated_task_info.items():
+            if tasklist_log.tasklist_field_key == 'MODULE':
+                victim.module_task_dict[pid] = tasklist_log.consolidated_task_info[pid]
+            elif tasklist_log.tasklist_field_key == 'SVC':
+                victim.service_task_dict[pid] = tasklist_log.consolidated_task_info[pid]
+            elif tasklist_log.tasklist_field_key == 'VERBOSE':
+                victim.verbose_task_dict[pid] = tasklist_log.consolidated_task_info[pid]
+            else:
+                print("{0}: Undefined tasklist column format, skipping line.".format(tasklist_log.file_name))
+                tasklist_log.set_state('error')
+            #print("{0} : {1}".format(pid, tasklist_log.consolidated_task_info[pid]))
+
+merge_victim_tasks(victim)
 
 for netstat_file in choose_files(netstat_path):
     netstat_log = NetstatLog(netstat_file, cache_data)
@@ -549,18 +682,18 @@ for netstat_file in choose_files(netstat_path):
 
     print('{0} status = {1}'.format(netstat_log.file_name, netstat_log.state))
 
-for iis_file in choose_files(iis_path):
-    iis_log = IISLog(iis_file, cache_data)
-    iis_log.parse_ip()
-    if iis_log.state == 'parsed':
-        unique_global_ip_addresses |= iis_log.log_ip_types['Global']
-    else:
-        print("{0} had some kind of parsing error, skipping that file's data for now.".format(iis_log.file_name))
-
-    print('{0} status = {1}'.format(iis_log.file_name, iis_log.state))
-
-# -------- Populate IP Cache ----------
-
+# for iis_file in choose_files(iis_path):
+#     iis_log = IISLog(iis_file, cache_data)
+#     iis_log.parse_ip()
+#     if iis_log.state == 'parsed':
+#         unique_global_ip_addresses |= iis_log.log_ip_types['Global']
+#     else:
+#         print("{0} had some kind of parsing error, skipping that file's data for now.".format(iis_log.file_name))
+#
+#     print('{0} status = {1}'.format(iis_log.file_name, iis_log.state))
+#
+# # -------- Populate IP Cache ----------
+#
 cache_data.add_to_cache(unique_global_ip_addresses)
 print('Cache Hits={0}'.format(cache_data.cache_hits))
 print('Lookups Performed={0}'.format(cache_data.lookup_count))
