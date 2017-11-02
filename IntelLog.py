@@ -5,6 +5,7 @@ from csv import DictReader, QUOTE_ALL, reader
 from ipwhois import IPWhois
 from collections import defaultdict
 from io import BytesIO, TextIOWrapper
+from datetime import date, datetime
 import mmap
 import pickle
 import pprint
@@ -24,25 +25,74 @@ def choose_files(file_path):
 
 
 def merge_victim_tasks(victim):
-    if not victim.verbose_task_dict:
-        victim.status_tasks_merge_complete = False
-        print("Merging cannot continue as there is no verbose task dictionary to work with.")
-        return False
-    else:
-        for pid, row in victim.verbose_task_dict.items():
-            if pid in victim.service_task_dict.keys() and pid in victim.module_task_dict.keys():
-                print("PID {0} in all 3 dicts, merging.".format(pid))
-                merge_step_1_dict = victim.merge_tasks(victim.service_task_dict[pid], victim.module_task_dict[pid])
-            elif pid in victim.module_task_dict.keys() and pid not in victim.service_task_dict.keys():
-                print("PID {0} in both verbose and module dicts, merging.".format(pid))
-                merge_step_1_dict = victim.merge_tasks(victim.module_task_dict[pid], victim.verbose_task_dict[pid])
-            else:
-                print("PID {0} only in verbose dictionary, moving.".format(pid))
-                merge_step_1_dict = victim.verbose_task_dict[pid]
+    assert victim.unique_pids  # The set needs to exist if we're going to iterate through it...
+    merge_step_1_dict = {}
+    for pid in victim.unique_pids:
+        pid_in_verbose_dict = pid in victim.verbose_task_dict.keys()
+        pid_in_service_dict = pid in victim.service_task_dict.keys()
+        pid_in_module_dict = pid in victim.module_task_dict.keys()
 
-            victim.merged_task_dict[pid] = victim.merge_tasks(merge_step_1_dict, victim.verbose_task_dict[pid])
-        victim.status_tasks_merge_complete = True
-        return True
+        pid_in_all_three = pid_in_verbose_dict and pid_in_service_dict and pid_in_module_dict
+        pid_in_verbose_and_service = pid_in_verbose_dict and pid_in_service_dict
+        pid_in_verbose_and_module = pid_in_verbose_dict and pid_in_module_dict
+        pid_in_service_and_module = pid_in_service_dict and pid_in_module_dict
+
+        if pid_in_all_three:
+            merge_step_1_dict = victim.merge_tasks(victim.verbose_task_dict[pid], victim.service_task_dict[pid])
+            victim.merged_task_dict[pid] = victim.merge_tasks(merge_step_1_dict, victim.module_task_dict[pid])
+            continue
+        elif pid_in_verbose_and_service:
+            assert not pid_in_all_three
+            assert not pid_in_module_dict
+            victim.merged_task_dict[pid] = victim.merge_tasks(victim.verbose_task_dict[pid],
+                                                              victim.service_task_dict[pid])
+            continue
+        elif pid_in_verbose_and_module:
+            assert not pid_in_all_three
+            assert not pid_in_service_dict
+            victim.merged_task_dict[pid] = victim.merge_tasks(victim.verbose_task_dict[pid],
+                                                              victim.module_task_dict[pid])
+            continue
+        elif pid_in_service_and_module:
+            assert not pid_in_all_three
+            assert not pid_in_verbose_dict
+            victim.merged_task_dict[pid] = victim.merge_tasks(victim.service_task_dict[pid],
+                                                              victim.module_task_dict[pid])
+            continue
+
+        else:
+            if pid_in_verbose_dict:
+                assert not pid_in_all_three
+                assert not pid_in_verbose_and_service
+                assert not pid_in_verbose_and_module
+                assert not pid_in_service_and_module
+                assert not pid_in_service_dict
+                assert not pid_in_module_dict
+                victim.merged_task_dict[pid] = victim.verbose_task_dict[pid]
+                continue
+
+            elif pid_in_service_dict:
+                assert not pid_in_all_three
+                assert not pid_in_verbose_and_service
+                assert not pid_in_verbose_and_module
+                assert not pid_in_service_and_module
+                assert not pid_in_verbose_dict
+                assert not pid_in_module_dict
+                victim.merged_task_dict[pid] = victim.service_task_dict[pid]
+                continue
+
+            else:  # Asserts to confirm the only thing that drops through in test is pid_in_module_dict = True
+                assert not pid_in_all_three
+                assert not pid_in_verbose_and_service
+                assert not pid_in_verbose_and_module
+                assert not pid_in_service_and_module
+                assert not pid_in_verbose_dict
+                assert not pid_in_service_dict
+                victim.merged_task_dict[pid] = victim.module_task_dict[pid]
+
+
+
+
 
 # ----------- CLASS DEFINITIONS -----------
 
@@ -498,7 +548,23 @@ class NetstatLog(IntelLog):
                     = self.file_row['Local Address'].split(':')
                 self.parsed_netstat_log['Remote Address'], self.parsed_netstat_log['Remote Port'] \
                     = self.file_row['Foreign Address'].split(':')
+
+                self.pid_to_network['PID'] = self.row['PID']
+                self.pid_to_network['Local Address'] = self.parsed_netstat_log['Local Address']
+                self.pid_to_network['Local Port'] = self.parsed_netstat_log['Local Port']
+                self.pid_to_network['Remote Address'] = self.parsed_netstat_log['Remote Address']
+                self.pid_to_network['Remote Port'] = self.parsed_netstat_log['Remote Port']
+                self.pid_to_network['Protocol'] = self.row['Proto']
+                if 'State' in self.row.keys():
+                    self.pid_to_network['State'] = self.row['State']
+                for row_key in self.pid_to_network.keys():
+                    if self.pid_to_network[row_key] == '*':
+                        self.pid_to_network[row_key] = 'ANY'
+                self.network_pids['Networking Data'].append(self.pid_to_network)
+                self.pid_to_network = {}
             except ValueError:
+                #print("Couldn't split this line, throwing it out: {0}".format(self.file_row))
+                self.pid_to_network = {}
                 continue # Throws out this line and moves on.  Opted not to create extensive error-handling logic.
 
             self.unique_ip_addresses.add(self.parsed_netstat_log['Local Address'])
@@ -528,18 +594,66 @@ class NetstatLog(IntelLog):
                              self.skip_initial_space)
         for self.row in self.log_file_buffer:
             self.record_count += 1
+
             try:
-                self.parsed_netstat_log['Local Address'], self.parsed_netstat_log['Local Port'] \
-                    = self.row['Local Address'].split(':')
-                self.parsed_netstat_log['Remote Address'], self.parsed_netstat_log['Remote Port'] \
-                    = self.row['Foreign Address'].split(':')
-                self.pid_to_network['PID'] = self.row['PID']
+                if self.row['Local Address'][0] == '[':
+                    if self.row['Local Address'][3] == '1':
+                        self.parsed_netstat_log['Local Address'] = 'LOCALHOST'
+                        self.split_seq, \
+                        self.parsed_netstat_log['Local Port'] = self.row['Local Address'].split('[::1]:')
+                    else:
+                        self.parsed_netstat_log['Local Address'] = 'ANY'
+                        self.split_seq, \
+                        self.parsed_netstat_log['Local Port'] = self.row['Local Address'].split('[::]:')
+                else:
+                    self.parsed_netstat_log['Local Address'], self.parsed_netstat_log['Local Port'] \
+                        = self.row['Local Address'].split(':')
+
+                if self.row['Foreign Address'][0] == '[':
+                    if self.row['Foreign Address'][3] == '1':
+                        self.parsed_netstat_log['Remote Address'] = 'LOCALHOST'
+                        self.split_seq, \
+                        self.parsed_netstat_log['Remote Port'] = self.row['Foreign Address'].split('[::1]:')
+                    else:
+                        self.parsed_netstat_log['Remote Address'] = 'ANY'
+                        self.split_seq, \
+                        self.parsed_netstat_log['Remote Port'] = self.row['Foreign Address'].split('[::]:')
+                else:
+                    self.parsed_netstat_log['Remote Address'], self.parsed_netstat_log['Remote Port'] \
+                        = self.row['Foreign Address'].split(':')
+
+                # Ugly fix to account for the DictReader expecting 4 columns, but only getting 3 when UDP rows are
+                # encountered
+                if self.row['Proto'] == 'UDP':
+                    self.pid_to_network['PID'] = self.row['State']  # This accounts for only having 3 columns when UDP
+
+                else:
+                    self.pid_to_network['PID'] = self.row['PID']
+                    self.pid_to_network['State'] = self.row['State']
+
+                # These fields are populated regardless of whether or not it's TCP or UDP
                 self.pid_to_network['Local Address'] = self.parsed_netstat_log['Local Address']
                 self.pid_to_network['Local Port'] = self.parsed_netstat_log['Local Port']
                 self.pid_to_network['Remote Address'] = self.parsed_netstat_log['Remote Address']
                 self.pid_to_network['Remote Port'] = self.parsed_netstat_log['Remote Port']
-                self.network_pids[self.row['PID']] = self.pid_to_network
+                self.pid_to_network['Protocol'] = self.row['Proto']
+
+                for row_key in self.pid_to_network.keys():
+                    if self.pid_to_network[row_key] == '*' \
+                            or self.pid_to_network[row_key] == '0' \
+                            or self.pid_to_network[row_key] == '0.0.0.0':
+                        self.pid_to_network[row_key] = 'ANY'
+                    if self.pid_to_network[row_key] == '127.0.0.1':
+                        self.pid_to_network[row_key] = 'LOCALHOST'
+                if self.pid_to_network['Protocol'] == 'UDP':
+                    self.network_pids[self.row['State']].append(self.pid_to_network)  # Because UDP is 3 column not 4
+                else:
+                    self.network_pids[self.row['PID']].append(self.pid_to_network)
+
+                self.pid_to_network = {}
             except ValueError:
+                print("Couldn't split this line, throwing it out: {0}".format(self.row))
+                self.pid_to_network = {}
                 continue  # Throws out this line and moves on.  Opted not to create extensive error-handling logic.
 
             self.unique_ip_addresses.add(self.parsed_netstat_log['Local Address'])
@@ -582,7 +696,7 @@ class TaskList(IntelLog):
         self.mod_header_length = 3
         self.tasklist_field_key = None
         self.consolidated_task_info = {}
-        self.victim = victim
+        self.unique_images = set()
 
     def parse_tasks_in_mem(self):
         self.__determine_tasklist_format()
@@ -595,6 +709,7 @@ class TaskList(IntelLog):
             for self.row in self.log_file_buffer:
                 self.record_count += 1
                 self.consolidated_task_info[self.row['PID']] = self.row
+                self.unique_images.add(self.row['Image Name'])
 
             self.set_state('parsed')
         except:
@@ -632,7 +747,11 @@ class Victim():
         self.module_task_dict = {}
         self.merged_task_dict = {}
         self.status_tasks_merge_complete = False
-        self.network_pid_records = None
+        self.unique_pids = set()
+        self.network_pid_records = defaultdict()
+        self.final_task_dictionary = {}
+        self.unique_images = set()
+        self.snapshot_time = datetime.now()  # This is intended to be used to capture when the program runs for recordkeeping
 
 
     @classmethod
@@ -676,7 +795,12 @@ for tasklist_file in choose_files(tasklist_path):
             else:
                 print("{0}: Undefined tasklist column format, skipping line.".format(tasklist_log.file_name))
                 tasklist_log.set_state('error')
-            # print("{0} : {1}".format(pid, tasklist_log.consolidated_task_info[pid]))
+
+            if pid.isdigit():
+                victim.unique_pids.add(pid)
+        victim.unique_images |= tasklist_log.unique_images
+    else:
+        print("Issue occurred processing {0}".format(tasklist_log.file_name))
 
 merge_victim_tasks(victim)
 
@@ -689,7 +813,8 @@ for netstat_file in choose_files(netstat_path):
         print("{0} had some kind of parsing error, skipping that file's data for now.".format(netstat_log.file_name))
     for pid in victim.merged_task_dict.keys():
         if pid in netstat_log.network_pids.keys():
-            victim.network_pid_records = victim.merge_tasks(victim.merged_task_dict[pid], netstat_log.network_pids[pid])
+            intermediate_merge_dict = {'Connections': netstat_log.network_pids[pid]}
+            victim.network_pid_records[pid] = victim.merge_tasks(victim.merged_task_dict[pid], intermediate_merge_dict)
 
     print('{0} status = {1}'.format(netstat_log.file_name, netstat_log.state))
 
@@ -705,6 +830,14 @@ for netstat_file in choose_files(netstat_path):
 #
 # # -------- Populate IP Cache ----------
 #
+
+for task_pid in victim.merged_task_dict.keys():
+    if task_pid in victim.network_pid_records.keys():
+        victim.final_task_dictionary[task_pid] = victim.merge_tasks(victim.merged_task_dict[task_pid],
+                                                                    victim.network_pid_records[task_pid])
+    else:
+        victim.final_task_dictionary[task_pid] = victim.merged_task_dict[task_pid]
+
 cache_data.add_to_cache(unique_global_ip_addresses)
 print('Cache Hits={0}'.format(cache_data.cache_hits))
 print('Lookups Performed={0}'.format(cache_data.lookup_count))
@@ -717,8 +850,11 @@ if cache_data.ip_addresses_with_lookup_errors:
 with open(ip_cache_filename, 'wb') as p_ip_cache:
     pickle.dump(cache_data, p_ip_cache, pickle.HIGHEST_PROTOCOL)
 
-pprint.pprint(victim.network_pid_records)
+pprint.pprint(victim.unique_images)
 
 
+# TODO: check for wmic CSV file that shows the full path of each image name
+# TODO: Develop a way to flag PIDs that are suspicious
+# TODO: flag processes that have the same image name but different image path
 
 
