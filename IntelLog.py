@@ -91,9 +91,6 @@ def merge_victim_tasks(victim):
                 victim.merged_task_dict[pid] = victim.module_task_dict[pid]
 
 
-
-
-
 # ----------- CLASS DEFINITIONS -----------
 
 
@@ -276,6 +273,7 @@ class IntelLog:
         self.encoding = file_encoding
         self.delimiter = file_delimiter
         with open(self.file_name, 'r', encoding=self.encoding) as self.fh:
+            print("Reading {0} ...".format(self.file_name))
             for i in range(self.lines_to_skip):
                 self.fh.readline()  # This is used to skip over any header garbage by moving the file pointer ahead
             self.reader_obj = DictReader(self.fh,
@@ -738,6 +736,37 @@ class TaskList(IntelLog):
             return self.state
 
 
+class WmicLog(IntelLog):
+    wmic_fields = {'Node': '', 'ExecutablePath': '', 'ProcessId': ''}
+
+    def __init__(self, log_file):
+        super().__init__('non_timestamped')
+        self.log_file = log_file
+        self.log_path = Path(log_file)
+        assert self.log_path.is_file()
+        self.encoding = 'utf-16'
+        self.delimiter = ','
+        self.unique_pids = defaultdict()
+
+    def parse_wmic(self):
+        assert self.state is not 'error'
+
+        try:
+            for self.row in self.open_log(self.log_file, self.encoding, self.delimiter, self.wmic_fields):
+                self.record_count += 1
+                if self.row['ExecutablePath']:
+                    self.unique_pids[self.row['ProcessId']] = self.row['ExecutablePath']
+                else:
+                    self.unique_pids[self.row['ProcessId']] = False
+            self.set_state('parsed')
+        except:
+            print("Error encountered while processing WMIC data file.")
+            self.set_state('error')
+
+
+
+
+
 class Victim():
     def __init__(self):
         self.hostname = None
@@ -751,6 +780,7 @@ class Victim():
         self.network_pid_records = defaultdict()
         self.final_task_dictionary = {}
         self.unique_images = set()
+        self.wmic_pid_records = {}
         self.snapshot_time = datetime.now()  # This is intended to be used to capture when the program runs for recordkeeping
 
 
@@ -767,6 +797,7 @@ base_path = r'C:/MoTemp/'
 iis_path = r'C:/MoTemp/iis/'
 netstat_path = r'C:/MoTemp/netstat/'
 tasklist_path = r'C:/MoTemp/tasklist/'
+wmic_path = r'C:/MoTemp/wmic/'
 ip_cache_filename = base_path + 'ip_cache.dat'
 victim_data = base_path + 'victim.dat'
 unique_global_ip_addresses = set()
@@ -831,14 +862,29 @@ for netstat_file in choose_files(netstat_path):
 # # -------- Populate IP Cache ----------
 #
 
+for wmic_file in choose_files(wmic_path):
+    wmic_log = WmicLog(wmic_file)
+    wmic_log.parse_wmic()
+    if wmic_log.state == 'parsed':
+        print("WMIC data file {0} status: {1}".format(wmic_log.file_name, wmic_log.state))
+        victim.wmic_pid_records = wmic_log.unique_pids
+    else:
+        print("{0} had some kind of parsing error, skipping that file's data for now.".format(wmic_log.file_name))
+
+
+
 for task_pid in victim.merged_task_dict.keys():
     if task_pid in victim.network_pid_records.keys():
         victim.final_task_dictionary[task_pid] = victim.merge_tasks(victim.merged_task_dict[task_pid],
                                                                     victim.network_pid_records[task_pid])
+        if task_pid in victim.wmic_pid_records:
+            victim.final_task_dictionary[task_pid]['Image Path'] = victim.wmic_pid_records[task_pid]
     else:
         victim.final_task_dictionary[task_pid] = victim.merged_task_dict[task_pid]
 
+
 cache_data.add_to_cache(unique_global_ip_addresses)
+
 print('Cache Hits={0}'.format(cache_data.cache_hits))
 print('Lookups Performed={0}'.format(cache_data.lookup_count))
 
@@ -850,7 +896,7 @@ if cache_data.ip_addresses_with_lookup_errors:
 with open(ip_cache_filename, 'wb') as p_ip_cache:
     pickle.dump(cache_data, p_ip_cache, pickle.HIGHEST_PROTOCOL)
 
-pprint.pprint(victim.unique_images)
+pprint.pprint(victim.final_task_dictionary)
 
 
 # TODO: check for wmic CSV file that shows the full path of each image name
