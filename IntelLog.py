@@ -747,24 +747,29 @@ class WmicLog(IntelLog):
         self.encoding = 'utf-16'
         self.delimiter = ','
         self.unique_pids = defaultdict()
+        self.empty_paths = 0
+        self.populated_paths = 0
 
     def parse_wmic(self):
         assert self.state is not 'error'
 
         try:
-            for self.row in self.open_log(self.log_file, self.encoding, self.delimiter, self.wmic_fields):
+            for self.row in self.open_log(self.log_file, self.encoding, self.delimiter, self.wmic_fields, skip_lines=1):
                 self.record_count += 1
                 if self.row['ExecutablePath']:
                     self.unique_pids[self.row['ProcessId']] = self.row['ExecutablePath']
+                    self.populated_paths += 1
                 else:
-                    self.unique_pids[self.row['ProcessId']] = False
+                    self.unique_pids[self.row['ProcessId']] = 'NOT FOUND'
+                    self.empty_paths += 1
+            print("{} total rows parsed. "
+                  "{} with image paths, "
+                  "and {} without in {}".format(self.record_count, self.populated_paths,
+                                                self.empty_paths, self.file_name))
             self.set_state('parsed')
         except:
             print("Error encountered while processing WMIC data file.")
             self.set_state('error')
-
-
-
 
 
 class Victim():
@@ -780,19 +785,34 @@ class Victim():
         self.network_pid_records = defaultdict()
         self.final_task_dictionary = {}
         self.unique_images = set()
+        self.images_with_different_paths = defaultdict(list)
         self.wmic_pid_records = {}
         self.snapshot_time = datetime.now()  # This is intended to be used to capture when the program runs for recordkeeping
-
 
     @classmethod
     def merge_tasks(cls, dict_a, dict_b):
         return {**dict_a, **dict_b}
 
+    def analyze_image_paths(self):
+        for self.pid, self.data in self.final_task_dictionary.items():
+            self.image_path_is_duplicate = self.data['Image Path'].lower() in \
+                                           self.images_with_different_paths[self.data['Image Name']]
+            if self.image_path_is_duplicate:
+                continue
+            else:
+                self.images_with_different_paths[self.data['Image Name']].append(self.data['Image Path'].lower())
+
+
+class Concern():
+    def __init__(self, victim, category, data):
+        self.victim = victim
+        self.category = category
+        self.concern_data = data
 
 
 # -------------- Main Flow ----------------
 
-
+print("System IR Triage Version 0.1 beta\n")
 base_path = r'C:/MoTemp/'
 iis_path = r'C:/MoTemp/iis/'
 netstat_path = r'C:/MoTemp/netstat/'
@@ -877,13 +897,18 @@ for task_pid in victim.merged_task_dict.keys():
     if task_pid in victim.network_pid_records.keys():
         victim.final_task_dictionary[task_pid] = victim.merge_tasks(victim.merged_task_dict[task_pid],
                                                                     victim.network_pid_records[task_pid])
-        if task_pid in victim.wmic_pid_records:
-            victim.final_task_dictionary[task_pid]['Image Path'] = victim.wmic_pid_records[task_pid]
     else:
         victim.final_task_dictionary[task_pid] = victim.merged_task_dict[task_pid]
+    if task_pid in victim.wmic_pid_records.keys():
+        victim.final_task_dictionary[task_pid]['Image Path'] = victim.wmic_pid_records[task_pid]
+    else:
+        victim.final_task_dictionary[task_pid]['Image Path'] = 'NOT FOUND'
+
+
 
 
 cache_data.add_to_cache(unique_global_ip_addresses)
+victim.analyze_image_paths()
 
 print('Cache Hits={0}'.format(cache_data.cache_hits))
 print('Lookups Performed={0}'.format(cache_data.lookup_count))
@@ -896,7 +921,16 @@ if cache_data.ip_addresses_with_lookup_errors:
 with open(ip_cache_filename, 'wb') as p_ip_cache:
     pickle.dump(cache_data, p_ip_cache, pickle.HIGHEST_PROTOCOL)
 
-pprint.pprint(victim.final_task_dictionary)
+print('Images that are running from more than one location in different processes:')
+for image in victim.images_with_different_paths:
+    if len(victim.images_with_different_paths[image]) > 1:
+        print(image)
+        for path in victim.images_with_different_paths[image]:
+            print("\t{}".format(path))
+#pprint.pprint(victim.images_with_different_paths)
+
+# for pid, data in victim.final_task_dictionary.items():
+#     print('{} : {} : {}'.format(pid, data['Image Name'], data['Image Path']))
 
 
 # TODO: check for wmic CSV file that shows the full path of each image name
