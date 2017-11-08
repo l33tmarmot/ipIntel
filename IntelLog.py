@@ -921,7 +921,13 @@ if cache_data.ip_addresses_with_lookup_errors:
 with open(ip_cache_filename, 'wb') as p_ip_cache:
     pickle.dump(cache_data, p_ip_cache, pickle.HIGHEST_PROTOCOL)
 
-print('Images that are running from more than one location in different processes:')
+print('Processes that were involved in network communications at the time of capture:')
+for pid, data in victim.network_pid_records.items():
+    print("\n-- Process {} --".format(pid), end='')
+    print("\t", end='')
+    pprint.pprint(victim.final_task_dictionary[pid])
+
+print('\nImages that are running from more than one location in different processes:')
 for image in victim.images_with_different_paths:
     if len(victim.images_with_different_paths[image]) > 1:
         print(image)
