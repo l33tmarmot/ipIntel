@@ -813,11 +813,12 @@ class Concern():
 # -------------- Main Flow ----------------
 
 print("System IR Triage Version 0.1 beta\n")
-base_path = r'C:/MoTemp/'
-iis_path = r'C:/MoTemp/iis/'
-netstat_path = r'C:/MoTemp/netstat/'
-tasklist_path = r'C:/MoTemp/tasklist/'
-wmic_path = r'C:/MoTemp/wmic/'
+#base_path = r'C:/MoTemp/'
+base_path = str(Path.cwd())
+iis_path = base_path + r'/iis/' #r'C:/MoTemp/iis/'
+netstat_path = base_path + r'/netstat/' #r'C:/MoTemp/netstat/'
+tasklist_path = base_path + r'/tasklist/' #r'C:/MoTemp/tasklist/'
+wmic_path = base_path + r'/wmic/' # r'C:/MoTemp/wmic/'
 ip_cache_filename = base_path + 'ip_cache.dat'
 victim_data = base_path + 'victim.dat'
 unique_global_ip_addresses = set()
@@ -939,8 +940,5 @@ for image in victim.images_with_different_paths:
 #     print('{} : {} : {}'.format(pid, data['Image Name'], data['Image Path']))
 
 
-# TODO: check for wmic CSV file that shows the full path of each image name
-# TODO: Develop a way to flag PIDs that are suspicious
-# TODO: flag processes that have the same image name but different image path
 
 
