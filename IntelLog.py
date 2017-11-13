@@ -813,8 +813,8 @@ class Concern():
 # -------------- Main Flow ----------------
 
 print("System IR Triage Version 0.1 beta\n")
-#base_path = r'C:/MoTemp/'
-base_path = str(Path.cwd())
+base_path = r'C:/MoTemp/'
+#base_path = str(Path.cwd())
 iis_path = base_path + r'/iis/' #r'C:/MoTemp/iis/'
 netstat_path = base_path + r'/netstat/' #r'C:/MoTemp/netstat/'
 tasklist_path = base_path + r'/tasklist/' #r'C:/MoTemp/tasklist/'

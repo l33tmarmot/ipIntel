@@ -11,7 +11,7 @@ class NetworkRecord:
         self.referenced = False  # Flag to indicate the are IPAddress objects associated with this object
 
     def __str__(self):
-        return f'{self.net}'
+        return f'{self.net} | Last Refresh Date: {self.last_refreshed}'
 
     def __repr__(self):
         return self.net_obj

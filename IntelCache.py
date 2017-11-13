@@ -2,6 +2,7 @@ import pickle
 from ipwhois import IPWhois
 from IntelRecord import NetworkRecord
 from pprint import pprint
+from datetime import date
 
 class IntelCache:
     def __init__(self, cache_type, cache_file):
@@ -41,6 +42,7 @@ class Global_IP_Cache(IntelCache):
         for new_net in new_network_list:
             new_network = NetworkRecord(new_net.strip())
             new_network.data_dict = results_dict
+            new_network.last_refreshed = date.today()
             self.networks.add(new_network)  # Don't add any other objects other than NetworkRecord objects here.
 
 
