@@ -110,11 +110,12 @@ for ip_obj in unique_ip_addr:
     address_obj = AddressRecord(ip_obj)
     network_returned = address_obj.query(cache)
     if network_returned:
-        print(network_returned)
+        print(f'{ip_obj} is in {network_returned}')
     else:
         cache.add(ip_obj)
 
 cache.save()
+
 #cache.dump()
 
 
