@@ -95,28 +95,29 @@ def scrape_ips_from_file(source_file, max_failures_to_return=1000, unique_rows_o
             'invalid_ip_addrs': failed_ip_conversions}
 
 
-# Test data follows
-# ----------------------------------------------------
-from pprint import pprint
+def run_independent():
+    unique_ip_addr = set()
+    cache = Global_IP_Cache()
 
-unique_ip_addr = set()
-cache = Global_IP_Cache()
+    for f in choose_files(r'C:\MoTemp\v2'):
+        collected_ip_info = scrape_ips_from_file(f)
+        unique_ip_addr |= collected_ip_info['global']
 
-for f in choose_files(r'C:\MoTemp\v2'):
-    collected_ip_info = scrape_ips_from_file(f)
-    unique_ip_addr |= collected_ip_info['global']
+    for ip_obj in unique_ip_addr:
+        address_obj = AddressRecord(ip_obj)
+        network_returned = address_obj.query(cache)
+        if network_returned:
+            print(f'{ip_obj} is in {network_returned}')
+        else:
+            cache.add(ip_obj)
 
-for ip_obj in unique_ip_addr:
-    address_obj = AddressRecord(ip_obj)
-    network_returned = address_obj.query(cache)
-    if network_returned:
-        print(f'{ip_obj} is in {network_returned}')
-    else:
-        cache.add(ip_obj)
+    cache.save()
 
-cache.save()
 
-#cache.dump()
+if __name__ == '__main__':
+    run_independent()
+
+
 
 
 
