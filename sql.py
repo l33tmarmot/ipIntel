@@ -5,7 +5,8 @@ def create_db(source_file):
     c = conn.cursor()
 
     c.execute('CREATE TABLE IF NOT EXISTS tbl_netstat (victim text,	collection_time text, proto	text, '
-              'local_address text, foreign_address text, foreign_port text,	state text,	pid	integer)')
+              'local_address text, local_port text, foreign_address text, foreign_port text,'
+              'state text, pid integer)')
 
     c.execute('CREATE TABLE IF NOT EXISTS tbl_imagepaths (victim text, collection_time text, pid integer, '
               'hostname text, imagepath text)')

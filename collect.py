@@ -3,6 +3,8 @@ from ipaddress import ip_address, AddressValueError
 from ipwhois.utils import unique_addresses
 from IntelCache import Global_IP_Cache
 from IntelRecord import AddressRecord
+from Parser import Netstat_Parser
+from datetime import datetime
 
 
 def merge(dict_a, dict_b):
@@ -95,7 +97,46 @@ def scrape_ips_from_file(source_file, max_failures_to_return=1000, unique_rows_o
             'invalid_ip_addrs': failed_ip_conversions}
 
 
+def ingest_netstat(source_file):
+    now = datetime.now().isoformat(' ')
+    for f in choose_files(source_file):
+        np = Netstat_Parser(f,'TAU-ZERO')
+        row_data = []
+        for row in np.parse():
+            if row['Proto'] == 'UDP':
+                cleaned_row = {'victim': np.victim, 'collection_time': now, 'proto': row['Proto'],
+                               'State': 'N/A', 'pid': int(row['State'])}
+                if row['Local Address'].startswith('['):
+                    cleaned_row['local_address'], cleaned_row['local_port'] = row['Local Address'].split(']:')
+                    cleaned_row['local_address'] = cleaned_row['local_address'].strip('[')
+                else:
+                    cleaned_row['local_address'], cleaned_row['local_port'] = row['Local Address'].split(':')
+                if row['Foreign Address'].startswith('['):
+                    cleaned_row['foreign_address'], cleaned_row['foreign_port'] = row['Foreign Address'].split(']:')
+                    cleaned_row['foreign_address'] = cleaned_row['foreign_address'].strip('[')
+                else:
+                    cleaned_row['foreign_address'], cleaned_row['foreign_port'] = row['Foreign Address'].split(':')
+                row_data.append(cleaned_row)
+            else:
+                cleaned_row = {'victim': np.victim, 'collection_time': now, 'proto': row['Proto'],
+                               'state': row['State'], 'pid': int(row['PID'])}
+                if row['Local Address'].startswith('['):
+                    cleaned_row['local_address'], cleaned_row['local_port'] = row['Local Address'].split(']:')
+                    cleaned_row['local_address'] = cleaned_row['local_address'].strip('[')
+                else:
+                    cleaned_row['local_address'], cleaned_row['local_port'] = row['Local Address'].split(':')
+                if row['Foreign Address'].startswith('['):
+                    cleaned_row['foreign_address'], cleaned_row['foreign_port'] = row['Foreign Address'].split(']:')
+                    cleaned_row['foreign_address'] = cleaned_row['foreign_address'].strip('[')
+                else:
+                    cleaned_row['foreign_address'], cleaned_row['foreign_port'] = row['Foreign Address'].split(':')
+                row_data.append(cleaned_row)
+
+        return row_data
+
+
 def run_independent():
+    # ---------  Scrape IPs out of files first --------- #
     unique_ip_addr = set()
     cache = Global_IP_Cache()
 
@@ -112,6 +153,12 @@ def run_independent():
             cache.add(ip_obj)
 
     cache.save()
+    netstat_rows = ingest_netstat(r'C:\MoTemp\netstat')
+    for row in netstat_rows:
+        print(row)
+# -----------------------------------------------------
+
+
 
 
 if __name__ == '__main__':
