@@ -3,7 +3,7 @@ from ipaddress import ip_address, AddressValueError
 from ipwhois.utils import unique_addresses
 from IntelCache import Global_IP_Cache
 from IntelRecord import AddressRecord
-from Parser import Netstat_Parser, Tasklist_Parser
+from Parser import Parser, WMIC_Parser, Netstat_Parser, Tasklist_Parser
 from datetime import datetime
 from pprint import pprint
 
@@ -98,6 +98,27 @@ def scrape_ips_from_file(source_file, max_failures_to_return=1000, unique_rows_o
             'invalid_ip_addrs': failed_ip_conversions}
 
 
+def ingest_generic(source_dir, victim, investigation_id):
+    '''Create a parser object with DictReader attributes suited for reading tasklist-produced data saved to a file,
+    then iterate through that file producing a list which can be consumed by other functions.'''
+    now = datetime.now().isoformat(' ')
+    parsed_files = {}
+    for f in choose_files(source_dir):
+        p = Parser(f, victim, investigation_id)
+        row_data = []
+        for row in p.parse():
+            cleaned_row = {}
+            for column in row:
+                new_column = column.lower().replace(" ", "_")
+                cleaned_row[new_column] = row[column]
+            cleaned_row['investigation_id'] = investigation_id
+            cleaned_row['victim'] = p.victim
+            cleaned_row['collection_time'] = now
+            row_data.append(cleaned_row)
+        parsed_files[p.file_name] = row_data
+    return parsed_files
+
+
 def ingest_netstat(source_dir, victim, investigation_id):
     '''Create a parser object with DictReader attributes suited for reading netstat data saved to a file, then iterate
     through that file producing a list which can be consumed by other functions.'''
@@ -106,49 +127,35 @@ def ingest_netstat(source_dir, victim, investigation_id):
         np = Netstat_Parser(f, victim, investigation_id)
         row_data = []
         for row in np.parse():
-            if row['Proto'] == 'UDP':
-                cleaned_row = {'victim': np.victim, 'collection_time': now, 'proto': row['Proto'],
-                               'State': 'N/A', 'pid': int(row['State'])}
-            else:
-                cleaned_row = {'victim': np.victim, 'collection_time': now, 'proto': row['Proto'],
-                               'state': row['State'], 'pid': int(row['PID'])}
-
-            if row['Local Address'].startswith('['):
-                cleaned_row['local_address'], cleaned_row['local_port'] = row['Local Address'].split(']:')
-                cleaned_row['local_address'] = cleaned_row['local_address'].strip('[')
-            else:
-                cleaned_row['local_address'], cleaned_row['local_port'] = row['Local Address'].split(':')
-
-            if row['Foreign Address'].startswith('['):
-                cleaned_row['foreign_address'], cleaned_row['foreign_port'] = row['Foreign Address'].split(']:')
-                cleaned_row['foreign_address'] = cleaned_row['foreign_address'].strip('[')
-            else:
-                cleaned_row['foreign_address'], cleaned_row['foreign_port'] = row['Foreign Address'].split(':')
-
-            cleaned_row['investigation_id'] = investigation_id
-            row_data.append(cleaned_row)
-
-        return row_data
-
-
-def ingest_tasklist(source_dir, victim, investigation_id):
-    '''Create a parser object with DictReader attributes suited for reading tasklist-produced data saved to a file,
-    then iterate through that file producing a list which can be consumed by other functions.'''
-    now = datetime.now().isoformat(' ')
-    parsed_files = {}
-    for f in choose_files(source_dir):
-        tp = Tasklist_Parser(f, victim, investigation_id)
-        row_data = []
-        for row in tp.parse():
-            original_row_keys = row.keys()
             cleaned_row = {}
-            for column in original_row_keys:
+            for column in row:
                 new_column = column.lower().replace(" ", "_")
                 cleaned_row[new_column] = row[column]
             cleaned_row['investigation_id'] = investigation_id
-            cleaned_row['victim'] = tp.victim
+            cleaned_row['victim'] = victim
+            cleaned_row['collection_time'] = now
             row_data.append(cleaned_row)
-        parsed_files[tp.file_name] = row_data
+        return row_data
+
+
+def ingest_wmic(source_dir, victim, investigation_id):
+    '''Generic processing using the base Parser class where there is no transformation necessary for each row other
+    than using .lower(), replacing spaces with underscores, and adding the victim and investigation attributes.'''
+    now = datetime.now().isoformat(' ')
+    parsed_files = {}
+    for f in choose_files(source_dir):
+        wp = WMIC_Parser(f, victim, investigation_id)
+        row_data = []
+        for row in wp.parse():
+            cleaned_row = {}
+            for column in row:
+                new_column = column.lower().replace(" ", "_")
+                cleaned_row[new_column] = row[column]
+            cleaned_row['investigation_id'] = investigation_id
+            cleaned_row['victim'] = wp.victim
+            cleaned_row['collection_time'] = now
+            row_data.append(cleaned_row)
+        parsed_files[wp.file_name] = row_data
     return parsed_files
 
 
@@ -173,14 +180,19 @@ def run_independent(work_dir, victim, investigation_id):
     netstat_rows = ingest_netstat(work_dir, victim, investigation_id)
 
     test_tasklist_dir = r'C:\MoTemp\tasklist'
-    tasklist_rows = ingest_tasklist(test_tasklist_dir, victim, investigation_id)
-    pprint(tasklist_rows)
+    tasklist_rows = ingest_generic(test_tasklist_dir, victim, investigation_id)
+
+    test_wmic_dir = r'C:\MoTemp\wmic'
+    wmic_rows = ingest_wmic(test_wmic_dir, victim, investigation_id)
+    pprint(netstat_rows)
 # -----------------------------------------------------
 
 
 
 
 if __name__ == '__main__':
+    # todo:  Develop a way to identify what data is available and dynamically chose what operations to execute
+
     test_directory = r'C:\MoTemp\netstat'
     test_victim = 'TAU-ZERO'
     test_investigation_id = 'INC00077777'
