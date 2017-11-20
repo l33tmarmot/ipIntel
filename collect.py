@@ -3,7 +3,7 @@ from ipaddress import ip_address, AddressValueError
 from ipwhois.utils import unique_addresses
 from IntelCache import Global_IP_Cache
 from IntelRecord import AddressRecord
-from Parser import Parser, WMIC_Parser, Netstat_Parser, Tasklist_Parser
+from Parser import Parser, WMIC_Parser, Netstat_Parser
 from datetime import datetime
 from pprint import pprint
 
@@ -38,6 +38,17 @@ def count_rows(source_file):
         all_rows += 1
         unique_rows.add(line)
     return {'total_rows': all_rows, 'unique_rows': len(unique_rows)}
+
+
+def get_parser(source_file, victim, investigation_id):
+    if '_imagepaths' in source_file.name:
+        return WMIC_Parser(source_file, victim, investigation_id)
+    elif '_netstat' in source_file.name:
+        return Netstat_Parser(source_file, victim, investigation_id)
+    elif '_tasklist' in source_file.name:
+        return Parser(source_file, victim, investigation_id)
+    else:
+        return False # Should create an error condition if no parser was found.
 
 
 def scrape_ips_from_file(source_file, max_failures_to_return=1000, unique_rows_only=True):
@@ -98,13 +109,14 @@ def scrape_ips_from_file(source_file, max_failures_to_return=1000, unique_rows_o
             'invalid_ip_addrs': failed_ip_conversions}
 
 
-def ingest_generic(source_dir, victim, investigation_id):
-    '''Create a parser object with DictReader attributes suited for reading tasklist-produced data saved to a file,
+def ingest(source_dir, investigation_id):
+    '''Create a parser object suited to reading the victim data saved to a text/csv file,
     then iterate through that file producing a list which can be consumed by other functions.'''
     now = datetime.now().isoformat(' ')
     parsed_files = {}
     for f in choose_files(source_dir):
-        p = Parser(f, victim, investigation_id)
+        victim_id, filename_parts = f.name.split('__')  # First element should always be the victim identifier
+        p = get_parser(f, victim_id, investigation_id)
         row_data = []
         for row in p.parse():
             cleaned_row = {}
@@ -116,50 +128,11 @@ def ingest_generic(source_dir, victim, investigation_id):
             cleaned_row['collection_time'] = now
             row_data.append(cleaned_row)
         parsed_files[p.file_name] = row_data
+        print(f'File parsed.... Victim: {p.victim} --> {p.file_name}')
     return parsed_files
 
 
-def ingest_netstat(source_dir, victim, investigation_id):
-    '''Create a parser object with DictReader attributes suited for reading netstat data saved to a file, then iterate
-    through that file producing a list which can be consumed by other functions.'''
-    now = datetime.now().isoformat(' ')
-    for f in choose_files(source_dir):
-        np = Netstat_Parser(f, victim, investigation_id)
-        row_data = []
-        for row in np.parse():
-            cleaned_row = {}
-            for column in row:
-                new_column = column.lower().replace(" ", "_")
-                cleaned_row[new_column] = row[column]
-            cleaned_row['investigation_id'] = investigation_id
-            cleaned_row['victim'] = victim
-            cleaned_row['collection_time'] = now
-            row_data.append(cleaned_row)
-        return row_data
-
-
-def ingest_wmic(source_dir, victim, investigation_id):
-    '''Generic processing using the base Parser class where there is no transformation necessary for each row other
-    than using .lower(), replacing spaces with underscores, and adding the victim and investigation attributes.'''
-    now = datetime.now().isoformat(' ')
-    parsed_files = {}
-    for f in choose_files(source_dir):
-        wp = WMIC_Parser(f, victim, investigation_id)
-        row_data = []
-        for row in wp.parse():
-            cleaned_row = {}
-            for column in row:
-                new_column = column.lower().replace(" ", "_")
-                cleaned_row[new_column] = row[column]
-            cleaned_row['investigation_id'] = investigation_id
-            cleaned_row['victim'] = wp.victim
-            cleaned_row['collection_time'] = now
-            row_data.append(cleaned_row)
-        parsed_files[wp.file_name] = row_data
-    return parsed_files
-
-
-def run_independent(work_dir, victim, investigation_id):
+def run_independent(work_dir, investigation_id):
     # ---------  Scrape IPs out of files first --------- #
     unique_ip_addr = set()
     cache = Global_IP_Cache()
@@ -177,26 +150,26 @@ def run_independent(work_dir, victim, investigation_id):
             cache.add(ip_obj)
 
     cache.save()
-    netstat_rows = ingest_netstat(work_dir, victim, investigation_id)
+    netstat_rows = ingest(work_dir, investigation_id)
 
     test_tasklist_dir = r'C:\MoTemp\tasklist'
-    tasklist_rows = ingest_generic(test_tasklist_dir, victim, investigation_id)
+    tasklist_rows = ingest(test_tasklist_dir, investigation_id)
 
     test_wmic_dir = r'C:\MoTemp\wmic'
-    wmic_rows = ingest_wmic(test_wmic_dir, victim, investigation_id)
-    pprint(netstat_rows)
+    wmic_rows = ingest(test_wmic_dir, investigation_id)
+    #pprint(netstat_rows)
+    #pprint(tasklist_rows)
+    #pprint(wmic_rows)
 # -----------------------------------------------------
 
 
 
 
 if __name__ == '__main__':
-    # todo:  Develop a way to identify what data is available and dynamically chose what operations to execute
 
     test_directory = r'C:\MoTemp\netstat'
-    test_victim = 'TAU-ZERO'
     test_investigation_id = 'INC00077777'
-    run_independent(test_directory, test_victim, test_investigation_id)
+    run_independent(test_directory, test_investigation_id)
 
 
 

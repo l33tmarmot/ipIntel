@@ -27,6 +27,7 @@ def create_db(source_file):
 
     conn.commit()
     conn.close()
+    print(f'New SQLite database file created for use --> {source_file}')
 
 def run_independent():
     test_db = 'testdb.sqlite'
