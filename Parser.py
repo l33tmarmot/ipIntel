@@ -73,9 +73,9 @@ class Netstat_Parser(Parser):
                                          fieldnames=self.columns, skipinitialspace=self.skip_initial_space)
             for row in self.reader_obj:
                 if row['Proto'] == 'UDP':
-                    cleaned_row = {'State': 'N/A', 'pid': int(row['State'])}
+                    cleaned_row = {'state': 'N/A', 'pid': int(row['State']), 'proto': 'UDP'}
                 else:
-                    cleaned_row = {'pid': int(row['PID'])}
+                    cleaned_row = {'pid': int(row['PID']), 'state': row['State'], 'proto': row['Proto']}
 
                 if row['Local Address'].startswith('['):
                     cleaned_row['local_address'], cleaned_row['local_port'] = row['Local Address'].split(']:')
@@ -113,10 +113,14 @@ class WMIC_Parser(Parser):
             self.reader_obj = DictReader(self.fh, delimiter=self.delimiter,
                                          fieldnames=self.columns, skipinitialspace=self.skip_initial_space)
             for row in self.reader_obj:
+                # Before throwing out the redundant column, make sure it's actually redundant
+                assert row['Node'] == self.victim
+                cleaned_row = {'pid': int(row['ProcessId'])}
                 if not row['ExecutablePath']:
-                    row['ExecutablePath'] = 'NOT_AVAILABLE'
-                yield row
-
+                    cleaned_row['executable_path'] = 'NOT_AVAILABLE'
+                else:
+                    cleaned_row['executable_path'] = row['ExecutablePath']
+                yield cleaned_row
 
 class Tasklist_Parser(Parser):
     def __init__(self, source_file, victim, investigation_id):

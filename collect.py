@@ -5,6 +5,7 @@ from IntelCache import Global_IP_Cache
 from IntelRecord import AddressRecord
 from Parser import Parser, WMIC_Parser, Netstat_Parser
 from datetime import datetime
+from collections import namedtuple
 from pprint import pprint
 
 
@@ -122,6 +123,7 @@ def ingest(source_dir, investigation_id):
             cleaned_row = {}
             for column in row:
                 new_column = column.lower().replace(" ", "_")
+                new_column = new_column.replace("#", "_num")
                 cleaned_row[new_column] = row[column]
             cleaned_row['investigation_id'] = investigation_id
             cleaned_row['victim'] = p.victim
