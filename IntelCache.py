@@ -35,7 +35,7 @@ class Global_IP_Cache(IntelCache):
         return f'Global IP address cache stored at {self.file}'
 
     def add(self, ip_obj):
-        whois_obj = IPWhois(str(ip_obj), allow_permutations=False)
+        whois_obj = IPWhois(str(ip_obj), allow_permutations=True)
         results_dict = whois_obj.lookup_rdap(depth=self.query_depth)
 
         new_network_list = results_dict['network']['cidr'].split(',')

@@ -39,11 +39,10 @@ def insert_evidence_data(evidence_file_name, list_of_rows):
         insert_into_table(test_database, 'tbl_netstat', list_of_rows)
     elif 'imagepaths' in evidence_file_name:
         insert_into_table(test_database, 'tbl_imagepaths', list_of_rows)
+    elif 'netconfig' in evidence_file_name:
+        insert_into_table(test_database, 'tbl_net_config', list_of_rows)
     else:
         print(f'Not sure what table to insert data from {evidence_file_name} into.')
-
-    # todo: Figure out how to prevent data from being inserted twice
-    # todo: Turn raw_evidence into SQL insert statements
 
 
 if __name__ == '__main__':
@@ -60,5 +59,4 @@ if __name__ == '__main__':
         victim, victim_file = key.name.split('__')
         insert_evidence_data(victim_file, raw_evidence[key])
         #print(f'{victim_file} --> {raw_evidence[key]}')
-
 

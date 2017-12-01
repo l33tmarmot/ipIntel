@@ -3,9 +3,9 @@ from ipaddress import ip_address, AddressValueError
 from ipwhois.utils import unique_addresses
 from IntelCache import Global_IP_Cache
 from IntelRecord import AddressRecord
-from Parser import Parser, WMIC_Parser, Netstat_Parser
+from Parser import Parser, Netconfig_Parser, WMIC_Parser, Netstat_Parser
 from datetime import datetime
-from collections import namedtuple
+from dateutil import parser as dateparser
 from pprint import pprint
 
 
@@ -13,10 +13,10 @@ def merge(dict_a, dict_b):
     return {**dict_a, **dict_b}
 
 
-def choose_files(file_path):
+def choose_files(file_path, glob_string='**/*.*'):
     """Generator function yielding each file from the path specified."""
     p = Path(file_path)
-    files = p.glob('**/*.*')   # This is going to grab everything
+    files = p.glob(glob_string)   # This is going to grab everything
     for f in files:
         if f.is_dir():
             choose_files(f)  # Handle nested directories if they exist
@@ -48,8 +48,10 @@ def get_parser(source_file, victim, investigation_id):
         return Netstat_Parser(source_file, victim, investigation_id)
     elif '_tasklist' in source_file.name:
         return Parser(source_file, victim, investigation_id)
+    elif '_netconfig' in source_file.name:
+        return Netconfig_Parser(source_file, victim, investigation_id)
     else:
-        return False # Should create an error condition if no parser was found.
+        return False # Will skip over any files that don't have a parser
 
 
 def scrape_ips_from_file(source_file, max_failures_to_return=1000, unique_rows_only=True):
@@ -110,27 +112,48 @@ def scrape_ips_from_file(source_file, max_failures_to_return=1000, unique_rows_o
             'invalid_ip_addrs': failed_ip_conversions}
 
 
+def capture_victim_system_time(source_file):
+    for line in open_log(source_file):
+        raw_timestamp = line
+        victim_time = dateparser.parse(line)
+        return victim_time
+
+
 def ingest(source_dir, investigation_id):
     '''Create a parser object suited to reading the victim data saved to a text/csv file,
     then iterate through that file producing a list which can be consumed by other functions.'''
     now = datetime.now().isoformat(' ')
+    victim_times = {}
+    for t in choose_files(source_dir, '**/*__currenttime.txt'):
+        victim_id, filename_parts = t.name.split('__')
+        victim_times[victim_id] = capture_victim_system_time(t)
+        print(f'Victim {victim_id} time = {victim_times[victim_id]}')
     parsed_files = {}
     for f in choose_files(source_dir):
         victim_id, filename_parts = f.name.split('__')  # First element should always be the victim identifier
+        #victim_capture_time = capture_victim_system_time(f'{source_dir}\{victim_id}__currenttime.txt')
+        #victim_iso_time = victim_capture_time.isoformat(' ')
+        # todo:  Decide how to first capture the victim's current time so the data is available when building the rows to insert below
         p = get_parser(f, victim_id, investigation_id)
-        row_data = []
-        for row in p.parse():
-            cleaned_row = {}
-            for column in row:
-                new_column = column.lower().replace(" ", "_")
-                new_column = new_column.replace("#", "_num")
-                cleaned_row[new_column] = row[column]
-            cleaned_row['investigation_id'] = investigation_id
-            cleaned_row['victim'] = p.victim
-            cleaned_row['collection_time'] = now
-            row_data.append(cleaned_row)
-        parsed_files[p.file_name] = row_data
-        print(f'File parsed.... Victim: {p.victim} --> {p.file_name}')
+        if p:
+            row_data = []
+            for row in p.parse():
+                cleaned_row = {}
+                for column in row:
+                    new_column = column.lower().replace(" ", "_")
+                    new_column = new_column.replace("#", "_num")
+                    cleaned_row[new_column] = row[column]
+                cleaned_row['investigation_id'] = investigation_id
+                cleaned_row['victim'] = p.victim
+                cleaned_row['ingest_time'] = now
+                cleaned_row['victim_time_at_capture'] = victim_times[victim_id]
+                row_data.append(cleaned_row)
+            parsed_files[p.file_name] = row_data
+            print(f'File parsed.... Victim: {p.victim} --> {p.file_name}')
+        else:
+            print(f'Skipping file {f} for victim {victim_id} for which there is no parser defined...')
+
+
     return parsed_files
 
 
