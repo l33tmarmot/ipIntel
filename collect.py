@@ -131,9 +131,6 @@ def ingest(source_dir, investigation_id):
     parsed_files = {}
     for f in choose_files(source_dir):
         victim_id, filename_parts = f.name.split('__')  # First element should always be the victim identifier
-        #victim_capture_time = capture_victim_system_time(f'{source_dir}\{victim_id}__currenttime.txt')
-        #victim_iso_time = victim_capture_time.isoformat(' ')
-        # todo:  Decide how to first capture the victim's current time so the data is available when building the rows to insert below
         p = get_parser(f, victim_id, investigation_id)
         if p:
             row_data = []
@@ -152,7 +149,6 @@ def ingest(source_dir, investigation_id):
             print(f'File parsed.... Victim: {p.victim} --> {p.file_name}')
         else:
             print(f'Skipping file {f} for victim {victim_id} for which there is no parser defined...')
-
 
     return parsed_files
 
@@ -186,9 +182,6 @@ def run_independent(work_dir, investigation_id):
     #pprint(tasklist_rows)
     #pprint(wmic_rows)
 # -----------------------------------------------------
-
-
-
 
 if __name__ == '__main__':
 

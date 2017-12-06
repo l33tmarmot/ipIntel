@@ -21,6 +21,7 @@ class Parser:
         self.skip_initial_space = skip_space
         self.quoting = quoting
         self.quote_char = quote_char
+        self.parser_type = 'GENERIC_PARSER'
 
 
     def __str__(self):
@@ -71,6 +72,7 @@ class Netstat_Parser(Parser):
     def __init__(self, source_file, victim, investigation_id):
         super().__init__(source_file, victim, investigation_id, file_delimiter=' ', skip_lines=4, skip_space=True)
         self.columns = ('Proto', 'Local Address', 'Foreign Address', 'State', 'PID')
+        self.parser_type = 'NETSTAT_PARSER'
 
     def __str__(self):
         return (f'Netstat Parser "{self.file_name}" associated with {self.victim} '
@@ -111,6 +113,7 @@ class WMIC_Parser(Parser):
     def __init__(self, source_file, victim, investigation_id):
         super().__init__(source_file, victim, investigation_id, skip_lines=1, file_encoding='utf-16')
         # Different Microsoft tools export CSV using different encodings....sigh.
+        self.parser_type = 'WMIC_PARSER'
 
     def __str__(self):
         return (f'WMIC Parser "{self.file_name}" associated with victim {self.victim} '
@@ -142,6 +145,7 @@ class Netconfig_Parser(Parser):
     def __init__(self, source_file, victim, investigation_id):
         super().__init__(source_file, victim, investigation_id, skip_lines=1, file_encoding='utf-16')
         # Different Microsoft tools export CSV using different encodings....sigh.
+        self.parser_type = 'NETCONFIG_PARSER'
 
     def __str__(self):
         return (f'Netconfig Parser "{self.file_name}" associated with victim {self.victim} '
@@ -177,6 +181,7 @@ class Netconfig_Parser(Parser):
 class Tasklist_Parser(Parser):
     def __init__(self, source_file, victim, investigation_id):
         super().__init__(source_file, victim, investigation_id, skip_space=True)
+        self.parser_type = 'TASKLIST_PARSER'
 
     def __str__(self):
         return(f'Tasklist Parser "{self.file_name}" associated with victim {self.victim} '
