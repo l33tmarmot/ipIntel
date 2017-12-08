@@ -111,18 +111,26 @@ def insert_into_table(destination_db, dest_table, rows_to_insert):
 def create_network_process_view(source_db):
     db = sqlite3.connect(source_db)
     cursor = db.cursor()
-    cursor.execute('CREATE VIEW IF NOT EXISTS v_outside_net_processes as '
-                   'SELECT tbl_netstat.victim, user_name, tbl_netstat.pid, image_name, tbl_imagepaths.executable_path, status, '
-                   'tbl_netstat.state, tbl_netstat.foreign_address, tbl_netstat.foreign_port, '
-                   'tbl_netstat.local_address, tbl_netstat.local_port '
-                   'FROM tbl_tasklist_verbose '
-                   'INNER JOIN tbl_imagepaths on tbl_imagepaths.pid = tbl_tasklist_verbose.pid '
-                   'INNER JOIN tbl_netstat on tbl_netstat.pid = tbl_tasklist_verbose.pid '
-                   'WHERE tbl_netstat.state != "LISTENING" '
-                   'and tbl_netstat.state != "N/A" '
-                   'and tbl_netstat.foreign_address != "127.0.0.1" '
-                   'ORDER BY tbl_netstat.foreign_address ASC, tbl_netstat.state, tbl_netstat.pid ASC;')
-
+    cursor.execute('create view if not exists v_internet_talking_processes '
+                   'as select distinct tbl_netstat.victim as "Victim", '
+                   'tbl_netstat.investigation_id as "Investigation ID", '
+                   'tbl_netstat.victim_time_at_capture as "Victim Capture Time", '
+                   'tbl_netstat.pid as "Process ID", '
+                   'tbl_tasklist_verbose.image_name as "Executable", '
+                   'tbl_imagepaths.executable_path as "Executable Path", '
+                   'tbl_netstat.local_address as "Local Address", '
+                   'tbl_netstat.local_port as "Local Port", '
+                   'tbl_netstat.foreign_address as "Foreign Address", '
+                   'tbl_netstat.foreign_port as "Foreign Port", '
+                   'tbl_investigation.foreign_address_country_code as "Country Code", '
+                   'tbl_investigation.foreign_address_contact_name as "Contact Name", '
+                   'tbl_investigation.foreign_address_entity as "Entity Name", '
+                   'tbl_investigation.foreign_address_contact_address as "Contact Address" '
+                   'from tbl_netstat '
+                   'inner join tbl_tasklist_verbose on tbl_tasklist_verbose.pid = tbl_netstat.pid '
+                   'inner join tbl_imagepaths on tbl_imagepaths.pid = tbl_netstat.pid '
+                   'inner join tbl_investigation on tbl_investigation.foreign_address = tbl_netstat.foreign_address '
+                   'ORDER BY tbl_netstat.foreign_address asc')
     db.commit()
 
 

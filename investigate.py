@@ -40,6 +40,7 @@ def insert_evidence_data(evidence_file_name, list_of_rows):
     elif 'netstat' in evidence_file_name:
         insert_into_table(test_database, 'tbl_netstat', list_of_rows)
         tbl_investigation_rows = []
+
         for row in list_of_rows:
             try:
                 ip_obj = ip_address(row['foreign_address'])
@@ -70,9 +71,9 @@ def insert_evidence_data(evidence_file_name, list_of_rows):
                 tbl_investigation_rows.append(tbl_investigation_row)
             else:
                 continue
-            insert_into_table(test_database, 'tbl_investigation', tbl_investigation_rows)
+        print(f'Number of rows = {len(tbl_investigation_rows)}')
+        insert_into_table(test_database, 'tbl_investigation', tbl_investigation_rows)
 
-        # todo: Handle the insertion of tbl_investigation and cache lookup of remote IP data
     elif 'imagepaths' in evidence_file_name:
         insert_into_table(test_database, 'tbl_imagepaths', list_of_rows)
     elif 'netconfig' in evidence_file_name:
@@ -97,10 +98,6 @@ if __name__ == '__main__':
         insert_evidence_data(victim_file, raw_evidence[key])
 
     create_network_process_view(test_database)
-    for v in victims:
-        v_rows = qry_victim_network_processes(v, test_database)
-        victim_net_processes = {v: v_rows}
-
 
     # todo: List all network processes starting with connected ones, and their associated ARIN (or other) registry data
     # todo: Write a parser for startup data to be used for analysis and to compare against baseline image

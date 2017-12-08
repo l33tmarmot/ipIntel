@@ -1,0 +1,2 @@
+Hashing of files using native command line windows tool:
+certUtil -hashfile svchost.exe md5 | findstr /V [:.]
