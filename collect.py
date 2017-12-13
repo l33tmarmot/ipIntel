@@ -6,7 +6,7 @@ from IntelRecord import AddressRecord
 from Parser import Parser, Netconfig_Parser, WMIC_Parser, Netstat_Parser
 from datetime import datetime
 from dateutil import parser as dateparser
-from pprint import pprint
+
 
 
 def merge(dict_a, dict_b):

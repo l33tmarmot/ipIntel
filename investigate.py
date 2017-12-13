@@ -1,14 +1,14 @@
 from IntelCache import Global_IP_Cache
 from IntelRecord import AddressRecord
 from collect import ingest, choose_files, scrape_ips_from_file
-from sql import create_db, insert_into_table, create_network_process_view, qry_victim_network_processes
-from pprint import pprint
+from sql import create_db, insert_into_table, create_network_process_view
 from ipaddress import ip_address
+import argparse
 
 
 def populate_cache(data_directory):
     unique_ip_addr = set()
-    cache = Global_IP_Cache()
+    cache = Global_IP_Cache(cache_file=f'{args.output_directory}\global_ip_cache.dat')
 
     for f in choose_files(data_directory):
         collected_ip_info = scrape_ips_from_file(f)
@@ -30,15 +30,15 @@ def insert_evidence_data(evidence_file_name, list_of_rows):
     '''Select the proper table based on the filename, then insert the data into that table'''
     if 'tasklist' in evidence_file_name:
         if 'verbose' in evidence_file_name:
-            insert_into_table(test_database, 'tbl_tasklist_verbose', list_of_rows)
+            insert_into_table(db_location, 'tbl_tasklist_verbose', list_of_rows)
         elif 'service' in evidence_file_name:
-            insert_into_table(test_database, 'tbl_tasklist_service', list_of_rows)
+            insert_into_table(db_location, 'tbl_tasklist_service', list_of_rows)
         elif 'modules' in evidence_file_name:
-            insert_into_table(test_database, 'tbl_tasklist_modules', list_of_rows)
+            insert_into_table(db_location, 'tbl_tasklist_modules', list_of_rows)
         else:
             print(f'The correct tasklist table to insert data cannot be found for {evidence_file_name}')
     elif 'netstat' in evidence_file_name:
-        insert_into_table(test_database, 'tbl_netstat', list_of_rows)
+        insert_into_table(db_location, 'tbl_netstat', list_of_rows)
         tbl_investigation_rows = []
 
         for row in list_of_rows:
@@ -72,33 +72,37 @@ def insert_evidence_data(evidence_file_name, list_of_rows):
             else:
                 continue
         print(f'Number of rows = {len(tbl_investigation_rows)}')
-        insert_into_table(test_database, 'tbl_investigation', tbl_investigation_rows)
+        insert_into_table(db_location, 'tbl_investigation', tbl_investigation_rows)
 
     elif 'imagepaths' in evidence_file_name:
-        insert_into_table(test_database, 'tbl_imagepaths', list_of_rows)
+        insert_into_table(db_location, 'tbl_imagepaths', list_of_rows)
     elif 'netconfig' in evidence_file_name:
-        insert_into_table(test_database, 'tbl_net_config', list_of_rows)
+        insert_into_table(db_location, 'tbl_net_config', list_of_rows)
     else:
         print(f'Not sure what table to insert data from {evidence_file_name} into.')
 
 
 if __name__ == '__main__':
-    test_directory = r'C:\MoTemp\v2'
-    test_investigation_id = 'INC00077777'
-    test_database = r'C:\MoTemp\evidence.sqlite'
+    #test_directory = r'C:\MoTemp\v2'
+    #test_investigation_id = 'INC00077777'
+    #db_location = r'C:\MoTemp\evidence.sqlite'
     victims = set()
-
-    create_db(test_database)
-    cache = populate_cache(test_directory)
-    raw_evidence = ingest(test_directory, test_investigation_id)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--directory', help="Directory where you have the raw data.", required=True)
+    parser.add_argument('-i', '--investigation_id', help="The case number to organize the data by.", required=True)
+    parser.add_argument('-o', '--output_directory', help="Directory where you want to put the database", default='./')
+    args = parser.parse_args()
+    db_location = f'{args.output_directory}\evidence.sqlite'
+    create_db(db_location)
+    cache = populate_cache(args.directory)
+    raw_evidence = ingest(args.directory, args.investigation_id)
 
     for key in raw_evidence:
         victim, victim_file = key.name.split('__')
         victims.add(victim)
         insert_evidence_data(victim_file, raw_evidence[key])
 
-    create_network_process_view(test_database)
+    create_network_process_view(db_location)
 
-    # todo: List all network processes starting with connected ones, and their associated ARIN (or other) registry data
     # todo: Write a parser for startup data to be used for analysis and to compare against baseline image
     # todo: Capture baseline data from fresh image (Zach / Alex)

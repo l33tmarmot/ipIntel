@@ -1,5 +1,5 @@
 from ipaddress import ip_network
-from ipwhois import IPWhois
+
 
 class NetworkRecord:
     def __init__(self, network_string):
