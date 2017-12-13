@@ -5,7 +5,7 @@ from pprint import pprint
 from datetime import date
 
 class IntelCache:
-    def __init__(self, cache_type, cache_file):
+    def __init__(self, cache_type, cache_file='global_ip_cache.dat'):
         self.cache_type = cache_type
         self.file = cache_file
 
@@ -17,8 +17,8 @@ class IntelCache:
 
 
 class Global_IP_Cache(IntelCache):
-    def __init__(self):  # Expects a Path object, not a string
-        super().__init__('IP', cache_file='global_ip_cache.dat')
+    def __init__(self, cache_file):  # Expects a Path object, not a string
+        super().__init__('IP', cache_file)
         self.loaded_from_file = False
         self.query_depth = 1
         try:
