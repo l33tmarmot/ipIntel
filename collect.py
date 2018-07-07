@@ -25,10 +25,12 @@ def choose_files(file_path, glob_string='**/*.*'):
 
 
 def open_log(source):
-    with open(source, 'r') as fh:
-        for row in fh:
-            yield row
-
+    try:
+        with open(source, 'r') as fh:
+            for row in fh:
+                yield row
+    except UnicodeDecodeError:
+        print(f"{source} threw a UnicodeDecodeError, skipping this unreadable file.")
 
 def count_rows(source_file):
     '''Utility function to help decide whether or not it makes sense to parse out the unique lines of a file rather
@@ -130,7 +132,12 @@ def ingest(source_dir, investigation_id):
         print(f'Victim {victim_id} time = {victim_times[victim_id]}')
     parsed_files = {}
     for f in choose_files(source_dir):
-        victim_id, filename_parts = f.name.split('__')  # First element should always be the victim identifier
+        try:
+            victim_id, filename_parts = f.name.split('__')  # First element should always be the victim identifier
+        except ValueError:
+            print(f"INGEST: {f.name} doesn't match evidence data format, skipping.")
+            continue
+
         p = get_parser(f, victim_id, investigation_id)
         if p:
             row_data = []

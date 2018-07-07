@@ -111,7 +111,7 @@ def insert_into_table(destination_db, dest_table, rows_to_insert):
 def create_network_process_view(source_db):
     db = sqlite3.connect(source_db)
     cursor = db.cursor()
-    cursor.execute('create view if not exists v_internet_talking_processes '
+    cursor.execute('create view if not exists v_network_talking_processes '
                    'as select distinct tbl_netstat.victim as "Victim", '
                    'tbl_netstat.investigation_id as "Investigation ID", '
                    'tbl_netstat.victim_time_at_capture as "Victim Capture Time", '
@@ -122,6 +122,7 @@ def create_network_process_view(source_db):
                    'tbl_netstat.local_port as "Local Port", '
                    'tbl_netstat.foreign_address as "Foreign Address", '
                    'tbl_netstat.foreign_port as "Foreign Port", '
+                   'tbl_netstat.state as "Connection State", '
                    'tbl_investigation.foreign_address_country_code as "Country Code", '
                    'tbl_investigation.foreign_address_contact_name as "Contact Name", '
                    'tbl_investigation.foreign_address_entity as "Entity Name", '

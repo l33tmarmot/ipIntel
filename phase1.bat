@@ -1,5 +1,3 @@
-del .\phase1\*.csv
-del .\phase1\*.txt
 mkdir .\phase1
 echo %date% %time% > .\phase1\%COMPUTERNAME%__currenttime.txt
 netstat -ano > .\phase1\%COMPUTERNAME%__netstat.csv

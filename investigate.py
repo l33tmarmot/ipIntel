@@ -69,6 +69,30 @@ def insert_evidence_data(evidence_file_name, list_of_rows):
                     tbl_investigation_row['foreign_address_contact_address'] = 'Unavailable'
                     tbl_investigation_row['foreign_address_country_code'] = 'Unavailable'
                 tbl_investigation_rows.append(tbl_investigation_row)
+
+            elif ip_obj.is_loopback:
+                continue  # Filter out any loopback address
+            elif ip_obj.is_multicast:
+                continue   # Filter out any multicast address
+            elif ip_obj.is_unspecified:
+                continue   # Filter out any RFC unspecified address
+            elif ip_obj.is_reserved:
+                continue   # Filter out any RFC reserved address
+
+            elif ip_obj.is_private:
+                tbl_investigation_row = {}
+                tbl_investigation_row['victim'] = row['victim']
+                tbl_investigation_row['investigation_id'] = row['investigation_id']
+                tbl_investigation_row['ingest_time'] = row['ingest_time']
+                tbl_investigation_row['foreign_address'] = row['foreign_address']
+                tbl_investigation_row['foreign_address_asn'] = 'Not Applicable'
+                tbl_investigation_row['foreign_address_entity'] = 'Not Applicable'
+                tbl_investigation_row['foreign_address_contact_name'] = 'Not Applicable'
+                tbl_investigation_row['foreign_address_contact_kind'] = 'Not Applicable'
+                tbl_investigation_row['foreign_address_contact_address'] = 'Not Applicable'
+                tbl_investigation_row['foreign_address_country_code'] = 'Not Applicable'
+                tbl_investigation_rows.append(tbl_investigation_row)
+
             else:
                 continue
         print(f'Number of rows = {len(tbl_investigation_rows)}')
